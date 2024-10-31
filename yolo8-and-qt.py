@@ -1,8 +1,5 @@
-import torch
 import cv2
-import numpy as np
 import sys
-#import warnings
 import logging
 import os
 from ultralytics import YOLO
@@ -32,6 +29,7 @@ class Window(QMainWindow):
         self.current_outFrame = None
         self.paused = False
         self.cap = None
+        self.target = 0
 
         # Timer to help display video frames
         self.timer = QTimer()
@@ -61,8 +59,14 @@ class Window(QMainWindow):
         self.files_dropdown.currentIndexChanged.connect(self.load_file)
         self.files_dropdown.setFixedHeight(50)
 
+        # Target select dropdown
+        #self.target_dropdown = QComboBox()
+        #self.target_dropdown.currentIndexChanged.connect(self.set_target)
+        #self.target_dropdown.setFixedHeight(50)
+
         self.ui_side.addWidget(self.load_button)
         self.ui_side.addWidget(self.files_dropdown)
+        #self.ui_side.addWidget(self.target_dropdown)        
 
         # Original file label
         self.og_label = QLabel("Original")
@@ -91,6 +95,7 @@ class Window(QMainWindow):
 
     # This function will open a dialog prompt for a folder
     def open_folder(self):
+        #self.load_targets()
         folder_path = QFileDialog.getExistingDirectory(self, "Open Source Folder", "")
         if folder_path:
             self.folder_files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.mp4', '.avi', '.mov', '.mkv'))]
@@ -98,9 +103,17 @@ class Window(QMainWindow):
             self.files_dropdown.clear()
             self.files_dropdown.addItems(self.folder_files)
 
+    """
+    def load_targets(self):
+         for i in range (80):
+              self.target_dropdown.addItem(str(i))
+
+    def set_target(self):
+        self.target = int(self.target_dropdown.currentText())
+    """
 
     def load_file(self):
-
+        
         # First get the name of the file from the dropdown
         file = self.files_dropdown.currentText()
 
@@ -109,7 +122,7 @@ class Window(QMainWindow):
 
         # Then looks at just the extension and determines if its an image or video
         extension = os.path.splitext(full_path)[-1]
-        if extension in ['.png', '.jpg', '.jpeg']:
+        if extension in ['.png', '.jpg', '.jpeg', '.JPG']:
             self.load_image(full_path)
         elif extension in ['.mp4', '.avi', '.mov', '.mkv']:
             self.load_video(full_path)
@@ -155,35 +168,30 @@ class Window(QMainWindow):
 
             label.setPixmap(scaled_pixmap)
 
-    def process(self):
-        outFrame = self.current_frame.copy()
-        self.current_outFrame = cv2.cvtColor(outFrame, cv2.COLOR_BGR2GRAY)
-'''
     
     def process(self):
         outFrame = self.current_frame.copy()
         output = yolov8m(outFrame)
-        boxes = output[0].boxes.xyxy.cpu().numpy()
-        ids = output[0].boxes.cls.cpu().numpy()  # Class IDs
-        confidences = output[0].boxes.conf.cpu().numpy()
+        boxes = output[self.target].boxes.xyxy.cpu().numpy()
+        ids = output[self.target].boxes.cls.cpu().numpy()  # Class IDs
+        confidences = output[self.target].boxes.conf.cpu().numpy()
         
-        peopleBoxes = boxes[ids == 0] # Filter to just people (id 0)
+        targetBoxes = boxes
+        #targetBoxes = boxes[ids == self.target] # Filter to just people (id 0), or cars (2)
 
-        pop = len(peopleBoxes) # Get number of people found
+        pop = len(targetBoxes) # Get number of people found
 
         # Draw boxes for every person found with colors based on confidence, blue = higher
-        for i, box in enumerate(peopleBoxes):
+        for i, box in enumerate(targetBoxes):
             x1, y1, x2, y2 = map(int, box)
             confidence = confidences[i]
             color = (int(255 * confidence), 0, int(255 * (1 - confidence)))
             cv2.rectangle(outFrame, (x1, y1), (x2, y2), color, 2)
             
-        cv2.putText(outFrame, f"Found: {pop}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 
-                            1.3, (255, 255, 255), 2)
+        cv2.putText(outFrame, f"Found: {pop}", (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 
+                            1.3, (0, 0, 0), 2)
                 
-        self.current_outFrame = outFrame
-    '''
-
+        self.current_outFrame = outFrame 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
