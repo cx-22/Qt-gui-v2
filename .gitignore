@@ -1,2 +1,10 @@
+/build
+/.vscode
+/sources
 qt5-tools
 yolov8m.pt
+test.py
+setup.py
+cx22.cpp
+cx22.so
+cx22.cpython-310-x86_64-linux-gnu.so
