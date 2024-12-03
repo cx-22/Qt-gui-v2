@@ -1,0 +1,1 @@
+Qt gui as a yolov8m and custom functions viewer
