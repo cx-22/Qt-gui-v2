@@ -193,7 +193,8 @@ class Window(QMainWindow):
         }
 
         self.currentEffect = self.effect_dropdown.currentText()
-        self.scale = 2
+        self.scaleX = 2
+        self.scaleY = 2
         self.divisor = 50
 
         self.blur = 3
@@ -311,8 +312,8 @@ class Window(QMainWindow):
             pass
 
         if (self.currentEffect == "Scale Up"):
-            self.options_label.setText("Scale")
-            self.options_bar.setPlaceholderText("2")
+            self.options_label.setText("Scale X and Y")
+            self.options_bar.setPlaceholderText("2, 2")
             self.options_bar.returnPressed.connect(self.set_scale)
         elif (self.currentEffect == "Color Quantize"):
             self.options_label.setText("Divisor")
@@ -341,7 +342,7 @@ class Window(QMainWindow):
     def set_sobel(self):
         values = self.options_bar.text().split(", ")
         if (int(values[0]) % 2 == 1):
-            self.blur = int(values[0])
+            self.blur = int(values[0])  
         self.contrast_threshold = int(values[1])
         self.on_black = values[2].lower() == "true"
         self.dvh = int(values[3])
@@ -356,9 +357,17 @@ class Window(QMainWindow):
         self.convert_image()
     
     def set_scale(self):
+
+        values = self.options_bar.text().split(", ")
+        
+        self.scaleX = values[0]  
+        self.scaleY = values[1]
+
         self.scale = int(self.options_bar.text())
-        if (self.scale > 5):
-            self.scale = 1
+        if (self.scaleX > 5):
+            self.scaleX = 1
+        if (self.scaleY > 5):
+            self.scaleY = 1
         self.convert_image()
         
     def set_divisor(self):
@@ -403,7 +412,7 @@ class Window(QMainWindow):
             self.pause_button.setText("Pause")      
 
     def apply_scale_up(self):
-        return cx22.resizeLarger(self.currentFrame, self.scale, self.scale)
+        return cx22.resizeLarger(self.currentFrame, self.scaleX, self.scaleY)
     
     def apply_quantize(self):
         return cx22.quantize(self.currentFrame, self.divisor)
