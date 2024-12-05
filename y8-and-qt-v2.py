@@ -1,8 +1,10 @@
 import cv2
 import sys
+import os
 import logging
 import cx22 # type: ignore
 import numpy as np
+import re
 #import 
 from yt_dlp import YoutubeDL
 from ultralytics import YOLO
@@ -202,6 +204,9 @@ class Window(QMainWindow):
         self.on_black = False
         self.dvh = 0
         self.y_percentage = 0
+
+        self.currentFileName = ""
+        self.currentFileExt = ""
         
     def video_manage(self):
         ret, frame = self.cap.read()
@@ -240,10 +245,14 @@ class Window(QMainWindow):
                 info = ydl.extract_info(self.url_bar.text(), download=False)
                 video_url = info['url']
                 self.cap = cv2.VideoCapture(video_url)
+                video_title = info.get('title', 'Unknown Title')
+                illegals = r'[<>:"/\\|?*\0]'
+                temp = re.sub(illegals, '-', video_title)
+                self.currentFileName = temp.strip().strip('.')
         else:
+            self.currentFileName = "urlvideo"
             self.cap = cv2.VideoCapture(self.url_bar.text())
         if self.cap.isOpened:
-            print(self.url_bar.text())
             self.current_media = "vid"
             self.paused = False
             self.timer.start(self.frameDelay)
@@ -257,6 +266,8 @@ class Window(QMainWindow):
         filePath, _ = QFileDialog.getOpenFileName(None, "Open File", "", "All Files (*);;Images (*.png *.jpg *.jpeg);;Videos (*.mp4 *.avi *.mov *.mkv)")
         if filePath:
             if filePath.lower().endswith(('.png', '.jpg', '.jpeg', '.JPG')):
+                self.currentFileExt = os.path.splitext(filePath)[1]
+                self.currentFileName = os.path.basename(filePath).split('.')[0]
                 self.current_media = "img"
                 self.timer.stop()
                 self.close_graph()
@@ -265,7 +276,10 @@ class Window(QMainWindow):
                 self.convert_image()
             if filePath.lower().endswith(('.mp4', '.mov', '.mkv', '.avi')):
                 self.cap = cv2.VideoCapture(filePath)
+                self.currentFile = filePath
                 if self.cap.isOpened:
+                    self.currentFileExt = os.path.splitext(filePath)[1]
+                    self.currentFileName = os.path.basename(filePath).split('.')[0]
                     self.current_media = "vid"
                     self.paused = False
                     self.timer.start(self.frameDelay)
@@ -274,6 +288,27 @@ class Window(QMainWindow):
                         self.show_graph()
                 else:
                     print("Whopps! Couldn't open video")
+
+    def save_file(self):
+        filenames = os.listdir()
+        temp = 0
+        #print("self.currentFileName is " + self.currentFileName)
+        #print("self.currentFileExt is " + self.currentFileExt)
+        if self.current_media == "vid":
+            for filename in filenames:
+                if self.currentFileName in filename and ".png" in filename:
+                    temp = temp + 1
+            #print("this is a video, save ?")
+            cv2.imwrite(self.currentFileName + "_" + str(temp) + ".png", self.currentOutFrame)
+        else:
+            for filename in filenames:
+                if self.currentFileName in filename and self.currentFileExt in filename:
+                    temp = temp + 1
+                    #print("this passed!! " + filename)
+            #print("this is an image, save ?")
+            cv2.imwrite(self.currentFileName + "_" + str(temp) + self.currentFileExt, self.currentOutFrame)
+
+
     
     def convert_image(self):
         self.currentOutFrame = self.effects[self.currentEffect]()
@@ -297,12 +332,6 @@ class Window(QMainWindow):
                 label.setPixmap(pixmap)
         else:
             print("whoooppa!!")
-
-    def save_file(self):
-        if self.current_media == "vid":
-            print("this is a video, save ?")
-        else:
-            print("this is an image, save ?")
     
     def set_effect(self):
         self.currentEffect = self.effect_dropdown.currentText()
@@ -360,10 +389,9 @@ class Window(QMainWindow):
 
         values = self.options_bar.text().split(", ")
         
-        self.scaleX = values[0]  
-        self.scaleY = values[1]
+        self.scaleX = int(values[0])  
+        self.scaleY = int(values[1])
 
-        self.scale = int(self.options_bar.text())
         if (self.scaleX > 5):
             self.scaleX = 1
         if (self.scaleY > 5):
