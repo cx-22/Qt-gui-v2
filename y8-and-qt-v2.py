@@ -407,6 +407,7 @@ class Window(QMainWindow):
         if self.current_media == "vid":
             if self.paused:
                 self.timer.start(self.frameDelay)
+                self.timerD.start()
                 self.paused = False
                 self.pause_button.setText("Pause")
             else:
