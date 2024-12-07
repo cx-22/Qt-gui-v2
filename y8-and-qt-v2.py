@@ -24,15 +24,42 @@ from PyQt5.QtWidgets import (
     QSpinBox
 )
 from PyQt5.QtGui import QPixmap, QImage, QFont
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 yolov8m = YOLO('yolov8m.pt')
 
+class VideoHandler(QThread):
+    #sendFrame = pyqtSignal()
+
+    def __init__(self, win):
+        super().__init__()
+        self.window = win
+
+    def convert(self, frame):
+        self.window.currentOutFrame = self.window.effects[self.window.currentEffect]() if self.window.effects else frame
+        #self.sendFrame.emit()
+
+    
+    def stop(self):
+        self.quit()
+        self.wait()
+
+
+
+
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
+        #self.showFullScreen()
+        screen = QApplication.primaryScreen()
+        screen_width = screen.size().width()
+        screen_height = screen.size().height()
+        
         # VARIABLES
+        self.handler = VideoHandler(self)
+        #self.handler.sendFrame.connect(self.updateOutFrame)
         self.current_media = None
         self.currentFrame = None
         self.currentOutFrame = None
@@ -51,7 +78,7 @@ class Window(QMainWindow):
         self.pop = 0
         
         self.plot_graph = pg.PlotWidget()
-        self.plot_graph.setMinimumHeight(300)
+        #self.plot_graph.setMinimumHeight(300)
         self.plot_graph.setBackground("w")
         pen = pg.mkPen(color=(255, 0, 0))
         self.plot_graph.setTitle(f"# of {self.targetString}", color="b", size="20pt")
@@ -91,49 +118,55 @@ class Window(QMainWindow):
         self.video_controls = QHBoxLayout()
         self.graph_space = QHBoxLayout()
 
-        self.menu_bar.setAlignment(QtCore.Qt.AlignCenter)
+        #self.menu_bar.setAlignment(QtCore.Qt.AlignCenter)
         self.video_controls.setAlignment(QtCore.Qt.AlignCenter)
 
         self.load_button = QPushButton("Load")
         self.load_button.clicked.connect(self.load_file)
-        self.load_button.setFixedHeight = 50
-        self.load_button.setFixedWidth = 50
+        self.load_button.setFixedHeight( int(screen_height * 0.05))
+        self.load_button.setFixedWidth( int(screen_width * 0.1))
 
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self.save_file)
-        self.save_button.setFixedHeight = 50
-        self.save_button.setFixedWidth = 50
+        self.save_button.setFixedHeight( int(screen_height * 0.05))
+        self.save_button.setFixedWidth( int(screen_width * 0.1))
         
         self.url_bar = QLineEdit()
         self.url_bar.setPlaceholderText("https://youtu.be/Hu0XosgxCyU?si=2_PF8mB67z6NiYDY")
         self.url_bar.returnPressed.connect(self.open_url)
 
         self.options_label = QLabel("")
-        self.options_label.setFixedHeight(50)
+        self.options_label.setFixedHeight(int(screen_height * 0.05))
 
         self.options_bar = QLineEdit()
         self.options_bar.setPlaceholderText("")
 
         self.effect_label = QLabel("Effect")
-        self.effect_label.setFixedHeight(50)
+        self.effect_label.setFixedHeight(int(screen_height * 0.05))
 
         self.effect_dropdown = QComboBox()
         self.effect_dropdown.currentIndexChanged.connect(self.set_effect)
-        self.effect_dropdown.setFixedHeight(50)
+        self.effect_dropdown.setFixedHeight(int(screen_height * 0.05))
+
+        self.exit_button = QPushButton("Exit")
+        self.exit_button.clicked.connect(self.exit_qt)
+        self.exit_button.setFixedHeight( int(screen_height * 0.05))
+        self.exit_button.setFixedWidth( int(screen_width * 0.1))
 
         self.effect_dropdown.addItem("Grayscale")
         self.effect_dropdown.addItem("Color Quantize")
-        self.effect_dropdown.addItem("Scale Up")
+        #self.effect_dropdown.addItem("Scale Up")
         self.effect_dropdown.addItem("Yolov8m")
         self.effect_dropdown.addItem("Sobel")
 
-        self.menu_bar.addWidget(self.load_button)
-        self.menu_bar.addWidget(self.save_button)
-        self.menu_bar.addWidget(self.url_bar)
-        self.menu_bar.addWidget(self.effect_label)
-        self.menu_bar.addWidget(self.effect_dropdown)
-        self.menu_bar.addWidget(self.options_label)
-        self.menu_bar.addWidget(self.options_bar)
+        self.menu_bar.addWidget(self.load_button, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.save_button, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.url_bar, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.effect_label, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.effect_dropdown, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.options_label, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.options_bar, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.exit_button, alignment=Qt.AlignTop)
 
         self.og_label = QLabel("Original")
         self.og_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -146,18 +179,18 @@ class Window(QMainWindow):
 
         self.pause_button = QPushButton("Pause")
         self.pause_button.clicked.connect(self.toggle_pause)
-        self.pause_button.setFixedHeight = 50
-        self.pause_button.setFixedWidth = 50
+        self.pause_button.setFixedHeight( int(screen_height * 0.05))
+        self.pause_button.setFixedWidth( int(screen_width * 0.1))
 
         self.b_frame_button = QPushButton("Frame Back")
         self.b_frame_button.clicked.connect(self.b_frame)
-        self.b_frame_button.setFixedHeight = 50
-        self.b_frame_button.setFixedWidth = 50
+        self.b_frame_button.setFixedHeight( int(screen_height * 0.05))
+        self.b_frame_button.setFixedWidth( int(screen_width * 0.1))
 
         self.f_frame_button = QPushButton("Frame Forward")
         self.f_frame_button.clicked.connect(self.f_frame)
-        self.f_frame_button.setFixedHeight = 50
-        self.f_frame_button.setFixedWidth = 50
+        self.f_frame_button.setFixedHeight( int(screen_height * 0.05))
+        self.f_frame_button.setFixedWidth( int(screen_width * 0.1))
 
         self.speed_label = QLabel("FPS")
 
@@ -174,7 +207,7 @@ class Window(QMainWindow):
         self.video_controls.addWidget(self.speed_label)
         self.video_controls.addWidget(self.speed_input)
 
-        self.graph_space.addWidget(self.plot_graph)
+        self.graph_space.addWidget(self.plot_graph, alignment=Qt.AlignBottom)
 
         self.main_layout = QVBoxLayout()
         self.main_layout.addLayout(self.menu_bar)
@@ -189,14 +222,14 @@ class Window(QMainWindow):
         self.effects = {
             "Grayscale": self.apply_grayscale,
             "Yolov8m": self.apply_yolov8m,
-            "Scale Up": self.apply_scale_up,
+            #"Scale Up": self.apply_scale_up,
             "Color Quantize": self.apply_quantize,
             "Sobel" : self.sobel,
         }
 
         self.currentEffect = self.effect_dropdown.currentText()
-        self.scaleX = 2
-        self.scaleY = 2
+        #self.scaleX = 2
+        #self.scaleY = 2
         self.divisor = 50
 
         self.blur = 3
@@ -212,7 +245,8 @@ class Window(QMainWindow):
         ret, frame = self.cap.read()
         if ret:
             self.currentFrame = frame
-            self.currentOutFrame = self.effects[self.currentEffect]()
+            #self.currentOutFrame = self.effects[self.currentEffect]()
+            self.handler.convert(frame)
             self.display(self.currentFrame, self.og_label)
             self.display(self.currentOutFrame, self.processed_label)
         else:
@@ -307,6 +341,9 @@ class Window(QMainWindow):
                     #print("this passed!! " + filename)
             #print("this is an image, save ?")
             cv2.imwrite(self.currentFileName + "_" + str(temp) + self.currentFileExt, self.currentOutFrame)
+    
+    def exit_qt(self):
+        self.close()
 
 
     
@@ -314,7 +351,7 @@ class Window(QMainWindow):
         self.currentOutFrame = self.effects[self.currentEffect]()
         self.display(self.currentFrame, self.og_label)
         self.display(self.currentOutFrame, self.processed_label)
-        self.adjustSize()
+        #self.adjustSize()
     
     def display(self, frame, label):
         if frame is not None:
@@ -325,11 +362,10 @@ class Window(QMainWindow):
 
             # Scale to fit the label and maintain its aspect ratio
             pixmap = QPixmap.fromImage(q_image)
-            if self.currentEffect != "Scale Up":
-                scaled_pixmap = pixmap.scaled(720, 720, QtCore.Qt.KeepAspectRatio)
-                label.setPixmap(scaled_pixmap)
-            else:
-                label.setPixmap(pixmap)
+
+            scaled_pixmap = pixmap.scaled(720, 720, QtCore.Qt.KeepAspectRatio)
+            label.setPixmap(scaled_pixmap)
+
         else:
             print("whoooppa!!")
     
@@ -340,11 +376,11 @@ class Window(QMainWindow):
         except TypeError:
             pass
 
-        if (self.currentEffect == "Scale Up"):
-            self.options_label.setText("Scale X and Y")
-            self.options_bar.setPlaceholderText("2, 2")
-            self.options_bar.returnPressed.connect(self.set_scale)
-        elif (self.currentEffect == "Color Quantize"):
+        #if (self.currentEffect == "Scale Up"):
+        #    self.options_label.setText("Scale X and Y")
+        #    self.options_bar.setPlaceholderText("2, 2")
+        #    self.options_bar.returnPressed.connect(self.set_scale)
+        if (self.currentEffect == "Color Quantize"):
             self.options_label.setText("Divisor")
             self.options_bar.setPlaceholderText("50")
             self.options_bar.returnPressed.connect(self.set_divisor)
@@ -385,6 +421,7 @@ class Window(QMainWindow):
         self.target = self.targetKeys[self.targetNames.index(self.targetString)]
         self.convert_image()
     
+    '''
     def set_scale(self):
 
         values = self.options_bar.text().split(", ")
@@ -396,7 +433,7 @@ class Window(QMainWindow):
             self.scaleX = 1
         if (self.scaleY > 5):
             self.scaleY = 1
-        self.convert_image()
+        self.convert_image()'''
         
     def set_divisor(self):
         self.divisor = int(self.options_bar.text())
@@ -440,8 +477,8 @@ class Window(QMainWindow):
             self.paused = False
             self.pause_button.setText("Pause")      
 
-    def apply_scale_up(self):
-        return cx22.resizeLarger(self.currentFrame, self.scaleX, self.scaleY)
+    #def apply_scale_up(self):
+    #    return cx22.resizeLarger(self.currentFrame, self.scaleX, self.scaleY)
     
     def apply_quantize(self):
         return cx22.quantize(self.currentFrame, self.divisor)
