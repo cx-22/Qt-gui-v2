@@ -404,9 +404,10 @@ class Window(QMainWindow):
         self.close()
 
     def convert_image(self):
-        self.currentOutFrame = self.effects[self.currentEffect]()
-        self.display(self.currentFrame, self.og_label)
-        self.display(self.currentOutFrame, self.processed_label)
+        if self.currentFrame is not None:
+            self.currentOutFrame = self.effects[self.currentEffect]()
+            self.display(self.currentFrame, self.og_label)
+            self.display(self.currentOutFrame, self.processed_label)
     
     def display(self, frame, label):
         if frame is not None:
@@ -484,19 +485,24 @@ class Window(QMainWindow):
             self.ct_label = QLabel("Threshold: ")
             self.yp_label = QLabel("Cut Top%: ")
 
-            self.blur_label.setFixedWidth( int(self.screen_width * 0.03))
+            self.blur_label.setFixedWidth( int(self.screen_width * 0.06))
             self.blur_label.setFixedHeight( int(self.screen_height * 0.05))
-            self.ct_label.setFixedWidth( int(self.screen_width * 0.05))
+            self.ct_label.setFixedWidth( int(self.screen_width * 0.065))
             self.ct_label.setFixedHeight( int(self.screen_height * 0.05))
-            self.yp_label.setFixedWidth( int(self.screen_width * 0.05))
+            self.yp_label.setFixedWidth( int(self.screen_width * 0.06))
             self.yp_label.setFixedHeight( int(self.screen_height * 0.05))
 
-            self.blur_input = QSpinBox()
+            self.blur_input = QSlider(self)
+            self.blur_input.setOrientation(Qt.Horizontal)
             self.blur_input.setMinimum(1)
-            self.blur_input.setMaximum(31)
+            self.blur_input.setMaximum(35)
             self.blur_input.setValue(5)
+            self.blur_input.setTickPosition(QSlider.TicksBelow)
+            self.blur_input.setTickInterval(2)
             self.blur_input.setSingleStep(2)
             self.blur_input.valueChanged.connect(self.set_blur)
+            self.blur_input.setFixedWidth(int(self.screen_width * 0.14))
+            self.blur_input.setFixedHeight( int(self.screen_height * 0.05))
 
             self.ct_input = QSlider(self)
             self.ct_input.setOrientation(Qt.Horizontal)
@@ -560,6 +566,10 @@ class Window(QMainWindow):
             self.yp_input.setFixedWidth(int(self.screen_width * 0.1))
             self.yp_input.setFixedHeight(int(self.screen_height * 0.05))
 
+            self.blur_label.setText("Blur: " + str(self.blur_input.value()))
+            self.ct_label.setText("Threshold: " + str(self.ct_input.value()))
+            self.yp_label.setText("Cut Top%: " + str(self.yp_input.value()))
+
             self.options.addWidget(self.blur_label)
             self.options.addWidget(self.blur_input)
             self.options.addWidget(self.ct_label)
@@ -589,11 +599,14 @@ class Window(QMainWindow):
             self.convert_image()
 
     def set_blur(self):
-        self.blur = self.blur_input.value()
+        if self.blur_input.value() % 2 != 0:
+            self.blur = self.blur_input.value()
+        self.blur_label.setText("Blur: " + str(self.blur))
         self.convert_image()
     
     def set_ct(self):
         self.contrast_threshold = self.ct_input.value()
+        self.ct_label.setText("Threshold: " + str(self.ct_input.value()))
         self.convert_image()
     
     def set_black(self, state):
@@ -639,6 +652,7 @@ class Window(QMainWindow):
     
     def set_yp(self):
         self.y_percentage = (self.yp_input.value() / 100)
+        self.yp_label.setText("Cut Top%: " + str(self.yp_input.value()))
         self.convert_image()
 
 
