@@ -129,6 +129,9 @@ class Window(QMainWindow):
         self.video_controls = QHBoxLayout()
         self.graph_space = QHBoxLayout()
 
+        self.og_label = QLabel("Original")
+        self.processed_label = QLabel("Processed")
+
         self.load_button = QPushButton("Load")
         self.load_button.clicked.connect(self.load_file)
         self.load_button.setFixedHeight( int(self.screen_height * 0.05))
@@ -175,11 +178,9 @@ class Window(QMainWindow):
         self.menu_bar.addWidget(self.effect_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.exit_button, alignment=Qt.AlignTop)
 
-        self.og_label = QLabel("Original")
         self.og_label.setAlignment(QtCore.Qt.AlignCenter)
         self.og_label.setFixedHeight( int(self.screen_height * 0.5))
 
-        self.processed_label = QLabel("Processed")
         self.processed_label.setAlignment(QtCore.Qt.AlignCenter)
         self.processed_label.setFixedHeight( int(self.screen_height * 0.5))
 
@@ -257,6 +258,7 @@ class Window(QMainWindow):
         self.default_button.clicked.connect(self.load_default)
         self.default_button.setFixedHeight( int(self.screen_height * 0.05))
         self.default_button.setFixedWidth( int(self.screen_width * 0.1))
+        self.close_graph()
     
 
     def update_plot(self):
@@ -267,10 +269,14 @@ class Window(QMainWindow):
         self.line.setData(self.timeList, self.popList)
 
     def show_graph(self):
+        self.og_label.setFixedHeight( int(self.screen_height * 0.5))
+        self.processed_label.setFixedHeight( int(self.screen_height * 0.5))
         self.plot_graph.show()
         self.timerD.start()
 
     def close_graph(self):
+        self.og_label.setFixedHeight( int(self.screen_height * 0.7))
+        self.processed_label.setFixedHeight( int(self.screen_height * 0.7))
         self.plot_graph.hide()
         self.timerD.stop()
         self.timeList = [0] * 10
@@ -387,8 +393,10 @@ class Window(QMainWindow):
 
             # Scale to fit the label and maintain its aspect ratio
             pixmap = QPixmap.fromImage(q_image)
-
-            scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.5), int(self.screen_height * 0.5), QtCore.Qt.KeepAspectRatio)
+            if self.plot_graph.isVisible():
+                scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.5), int(self.screen_height * 0.5), QtCore.Qt.KeepAspectRatio)
+            else:
+                scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.7), int(self.screen_height * 0.7), QtCore.Qt.KeepAspectRatio)
             label.setPixmap(scaled_pixmap)
 
         else:
@@ -421,19 +429,26 @@ class Window(QMainWindow):
             self.qdivisor_input.setTickInterval(5)
             self.qdivisor_input.valueChanged.connect(self.set_divisor)
             self.qdivisor_input.setFixedWidth(int(self.screen_width * 0.4))
+            self.qdivisor_input.setFixedHeight( int(self.screen_height * 0.05))
 
             self.options_label = QLabel("Divisor: " + str(self.qdivisor_input.value()))
             self.options_label.setFixedWidth( int(self.screen_width * 0.1))
+            self.options_label.setFixedHeight( int(self.screen_height * 0.05))
 
             self.options.addWidget(self.options_label)
             self.options.addWidget(self.qdivisor_input)
 
         elif (self.currentEffect == "Yolov8m"):
             self.clear_option_layout()
-            self.options_label = QLabel("Target")
+            self.options_label = QLabel("Target: ")
             self.options_textbar = QLineEdit()
             self.options_textbar.setPlaceholderText("person")
             self.options_textbar.returnPressed.connect(self.set_target)
+
+            self.options_label.setFixedWidth( int(self.screen_width * 0.05))
+            self.options_label.setFixedHeight( int(self.screen_height * 0.05))
+            self.options_textbar.setFixedWidth( int(self.screen_width * 0.1))
+            self.options_textbar.setFixedHeight( int(self.screen_height * 0.05))
 
             self.options.addWidget(self.options_label)
             self.options.addWidget(self.options_textbar)
@@ -446,8 +461,11 @@ class Window(QMainWindow):
             self.yp_label = QLabel("Cut Top%: ")
 
             self.blur_label.setFixedWidth( int(self.screen_width * 0.03))
+            self.blur_label.setFixedHeight( int(self.screen_height * 0.05))
             self.ct_label.setFixedWidth( int(self.screen_width * 0.05))
+            self.ct_label.setFixedHeight( int(self.screen_height * 0.05))
             self.yp_label.setFixedWidth( int(self.screen_width * 0.05))
+            self.yp_label.setFixedHeight( int(self.screen_height * 0.05))
 
             self.blur_input = QSpinBox()
             self.blur_input.setMinimum(1)
@@ -465,6 +483,7 @@ class Window(QMainWindow):
             self.ct_input.setTickInterval(10)
             self.ct_input.valueChanged.connect(self.set_ct)
             self.ct_input.setFixedWidth(int(self.screen_width * 0.1))
+            self.ct_input.setFixedHeight( int(self.screen_height * 0.05))
 
             self.black_check = QCheckBox("On Black")
             self.black_check.stateChanged.connect(self.set_black)
@@ -485,13 +504,26 @@ class Window(QMainWindow):
             self.sobel_d = QCheckBox("Diagonal")
             self.sobel_d.stateChanged.connect(self.set_lines)
 
-            self.blur_input.setFixedWidth( int(self.screen_width * 0.05))
-            self.black_check.setFixedWidth( int(self.screen_width * 0.05))
-            self.all_lines_check.setFixedWidth( int(self.screen_width * 0.05))
-            self.amap_check.setFixedWidth( int(self.screen_width * 0.03))
-            self.sobel_h.setFixedWidth( int(self.screen_width * 0.06))
-            self.sobel_v.setFixedWidth( int(self.screen_width * 0.05))
-            self.sobel_d.setFixedWidth( int(self.screen_width * 0.05))
+            self.blur_input.setFixedWidth(int(self.screen_width * 0.05))
+            self.blur_input.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.black_check.setFixedWidth(int(self.screen_width * 0.05))
+            self.black_check.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.all_lines_check.setFixedWidth(int(self.screen_width * 0.05))
+            self.all_lines_check.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.amap_check.setFixedWidth(int(self.screen_width * 0.03))
+            self.amap_check.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.sobel_h.setFixedWidth(int(self.screen_width * 0.06))
+            self.sobel_h.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.sobel_v.setFixedWidth(int(self.screen_width * 0.05))
+            self.sobel_v.setFixedHeight(int(self.screen_height * 0.05))
+
+            self.sobel_d.setFixedWidth(int(self.screen_width * 0.05))
+            self.sobel_d.setFixedHeight(int(self.screen_height * 0.05))
 
             self.yp_input = QSlider(self)
             self.yp_input.setOrientation(Qt.Horizontal)
@@ -502,6 +534,7 @@ class Window(QMainWindow):
             self.yp_input.setTickInterval(5)
             self.yp_input.valueChanged.connect(self.set_yp)
             self.yp_input.setFixedWidth(int(self.screen_width * 0.1))
+            self.yp_input.setFixedHeight(int(self.screen_height * 0.05))
 
             self.options.addWidget(self.blur_label)
             self.options.addWidget(self.blur_input)
@@ -515,6 +548,9 @@ class Window(QMainWindow):
             self.options.addWidget(self.sobel_d)
             self.options.addWidget(self.yp_label)
             self.options.addWidget(self.yp_input)
+        
+        else:
+            self.clear_option_layout()
             
 
         if self.currentEffect == "Yolov8m" and self.current_media == "vid":
@@ -566,11 +602,11 @@ class Window(QMainWindow):
             self.amap_check.setChecked(False)
             self.all_lines_check.setChecked(False)
             temp = 1
-            if self.sobel_h.isChecked():
+            if self.sobel_d.isChecked():
                 temp = temp * 2
             if self.sobel_v.isChecked():
                 temp = temp * 3
-            if self.sobel_d.isChecked():
+            if self.sobel_h.isChecked():
                 temp = temp * 5
             self.dvh = temp
         else:
@@ -591,8 +627,8 @@ class Window(QMainWindow):
             self.convert_image()
         
     def set_divisor(self):
-        self.options_label.setText("FPS: " + str(self.qdivisor_input.value()))  
-        self.divisor = self.speed_input.value()
+        self.options_label.setText("Divisor: " + str(self.qdivisor_input.value()))  
+        self.divisor = self.qdivisor_input.value()
         self.convert_image()
 
     def toggle_pause(self):
