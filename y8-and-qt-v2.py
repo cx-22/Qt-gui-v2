@@ -396,7 +396,7 @@ class Window(QMainWindow):
             if self.plot_graph.isVisible():
                 scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.5), int(self.screen_height * 0.5), QtCore.Qt.KeepAspectRatio)
             else:
-                scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.7), int(self.screen_height * 0.7), QtCore.Qt.KeepAspectRatio)
+                scaled_pixmap = pixmap.scaled(int(self.screen_width * 0.5), int(self.screen_height * 0.7), QtCore.Qt.KeepAspectRatio)
             label.setPixmap(scaled_pixmap)
 
         else:
@@ -620,7 +620,7 @@ class Window(QMainWindow):
 
     
     def set_target(self):
-        self.targetString = self.options_bar.text()
+        self.targetString = self.options_textbar.text()
         if self.targetString in self.targetNames:
             self.target = self.targetKeys[self.targetNames.index(self.targetString)]
             self.plot_graph.setTitle(f"# of {self.targetString}", color="b", size="20pt")
