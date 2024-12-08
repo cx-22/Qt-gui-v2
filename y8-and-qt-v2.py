@@ -70,8 +70,6 @@ class Window(QMainWindow):
         self.currentFrame = None
         self.currentOutFrame = None
 
-        self.default_url = "https://www.youtube.com/live/z-kjpAVKvyo?si=Bhz39xU9YOHq54kP"
-
         self.paused = False
         self.cap = None
         self.frameDelay = int(1000/30)
@@ -142,11 +140,27 @@ class Window(QMainWindow):
         self.save_button.setFixedHeight( int(self.screen_height * 0.05))
         self.save_button.setFixedWidth( int(self.screen_width * 0.1))
 
-        self.default_button = QPushButton("Default")
+        self.default_label = QLabel("Defaults")
+        self.default_label.setFixedWidth( int(self.screen_width * 0.05))
+        self.default_label.setFixedHeight(int(self.screen_height * 0.05))
+        self.default_dropdown = QComboBox()
+        self.default_dropdown.setFixedWidth( int(self.screen_width * 0.1))
+        self.default_dropdown.setFixedHeight(int(self.screen_height * 0.05))
+
+        self.default_dropdown.addItem("")
+        self.default_dropdown.addItem("California")
+        self.default_dropdown.addItem("Texas")
+        self.default_dropdown.addItem("New Orleans")
+        self.default_dropdown.addItem("Finland")
+        self.default_dropdown.addItem("Dublin")
+        self.default_dropdown.addItem("St. Petersburg")
+        self.default_dropdown.addItem("Tokyo")
+        self.default_dropdown.addItem("Thailand")
+        self.default_dropdown.addItem("Nascar")
 
         self.url_bar = QLineEdit()
-        self.url_bar.setPlaceholderText(self.default_url)
         self.url_bar.returnPressed.connect(self.open_url)
+        self.url_bar.setPlaceholderText("https://youtu.be/jNQXAC9IVRw?si=sliH5ck690ZVjVUo")
         self.url_bar.setFixedHeight( int(self.screen_height * 0.05))
 
         self.effect_label = QLabel("Effect")
@@ -155,10 +169,6 @@ class Window(QMainWindow):
         self.effect_dropdown = QComboBox()
         self.effect_dropdown.currentIndexChanged.connect(self.set_effect)
         self.effect_dropdown.setFixedHeight(int(self.screen_height * 0.05))
-
-
-
-
 
         self.exit_button = QPushButton("Exit")
         self.exit_button.clicked.connect(self.exit_qt)
@@ -172,7 +182,8 @@ class Window(QMainWindow):
 
         self.menu_bar.addWidget(self.load_button, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.save_button, alignment=Qt.AlignTop)
-        self.menu_bar.addWidget(self.default_button, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.default_label, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.default_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.url_bar, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.effect_label, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.effect_dropdown, alignment=Qt.AlignTop)
@@ -243,6 +254,20 @@ class Window(QMainWindow):
             "Sobel" : self.sobel,
         }
 
+        self.defaults = {
+            "California": "https://www.youtube.com/live/PtChZ0D7tkE?si=ylVs8s5BlIH2_aU6",
+            "Texas": "https://www.youtube.com/live/otX-buqqS6Q?si=ulxJadK_wuVYe1SB",
+            "New Orleans": "https://www.youtube.com/live/z-kjpAVKvyo?si=Bhz39xU9YOHq54kP",
+            "Finland": "https://www.youtube.com/live/Cp4RRAEgpeU?si=xXJ9tIJUD17qD9zt",
+            "Dublin": "https://www.youtube.com/live/u4UZ4UvZXrg?si=A5FSMhUJjX0gY7Yb",
+            "St. Petersburg": "https://www.youtube.com/live/h1wly909BYw?si=Boe9gLUcLcp6Za55",
+            "Tokyo": "https://www.youtube.com/live/DjdUEyjx8GM?si=-umo4EzSyDXDNkqd",
+            "Thailand": "https://www.youtube.com/live/VR-x3HdhKLQ?si=VnaPWvrndui3cCrQ", 
+            "Nascar": "https://youtu.be/SD1sfThjMRg?si=KvcyExW0LpCd8tbV",
+        }
+        
+        self.default_dropdown.currentIndexChanged.connect(self.load_default)
+
         self.currentEffect = self.effect_dropdown.currentText()
         self.divisor = 50
 
@@ -255,9 +280,6 @@ class Window(QMainWindow):
         self.currentFileName = ""
         self.currentFileExt = ""
 
-        self.default_button.clicked.connect(self.load_default)
-        self.default_button.setFixedHeight( int(self.screen_height * 0.05))
-        self.default_button.setFixedWidth( int(self.screen_width * 0.1))
         self.close_graph()
     
 
@@ -295,8 +317,10 @@ class Window(QMainWindow):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     
     def load_default(self):
-        self.url_bar.setText(self.default_url)
-        self.open_url()
+        if self.default_dropdown.currentText() != "":
+            self.default_url = self.defaults[self.default_dropdown.currentText()]
+            self.url_bar.setText(self.default_url)
+            self.open_url()
     
     def open_url(self):
         if "youtube.com" in self.url_bar.text() or "youtu.be/" in self.url_bar.text():
