@@ -1,6 +1,10 @@
 /build
+/dist
 /.vscode
 /sources
+/assets
 qt5-tools
 yolov8m.pt
-test.py
+/cpp-stuff
+/testing
+y8-and-qt-v2.spec

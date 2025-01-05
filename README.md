@@ -1,1 +1,1 @@
-Qt gui as a yolov8m and custom functions viewer
+Qt app to use to test Yolov8
