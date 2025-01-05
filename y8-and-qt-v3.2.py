@@ -25,8 +25,31 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 
+import torch
+
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
+
+yolov8s = YOLO('yolov8s.pt')
 yolov8m = YOLO('yolov8m.pt')
+yolov8l = YOLO('yolov8l.pt')
+yolov5m = YOLO('yolov5m.pt')
+#Find yolov7.pt yourself
+#yolov7m = torch.hub.load("WongKinYiu/yolov7",f"/yolov7",trust_repo=True)
+yolov11m = YOLO('yolo11m.pt')
+
+# Check if CUDA is available
+if torch.cuda.is_available():
+    print("CUDA is available. GPU will be used.")
+    print("GPU Name:", torch.cuda.get_device_name(0))
+    yolov8s.to('cuda')
+    yolov8m.to('cuda')
+    yolov8l.to('cuda')
+    yolov5m.to('cuda')
+    #yolov7m.to('cuda')
+    yolov11m.to('cuda')
+else:
+    print("CUDA is not available. Using CPU.")
+
 
 class Worker(QThread):
     def __init__(self, win, frame):
@@ -130,10 +153,11 @@ class Window(QMainWindow):
         gradient = np.repeat(gradient, 20, axis=0)
         cmap_legend = cmap(gradient)
         cmap_legend = (cmap_legend[:, :, :3] * 255).astype(np.uint8)
-        height, width, channel = cmap_legend.shape
-        bytes_per_line = channel * width
-        q_image = QImage(cmap_legend.data, width, height, bytes_per_line, QImage.Format_RGB888)
-        self.cmap_pixmap = QPixmap.fromImage(q_image)
+        cmap_height, cmap_width, cmap_channel = cmap_legend.shape
+        cmap_bytes_per_line = cmap_channel * cmap_width
+        cmap_qimage = QImage(cmap_legend.data, cmap_width, cmap_height, cmap_bytes_per_line, QImage.Format_RGB888)
+        scaled_cmap_qimage = cmap_qimage.scaled(int(cmap_width / 2), cmap_height)
+        self.cmap_pixmap = QPixmap.fromImage(scaled_cmap_qimage)
 
         self.workers = []
         self.frameGrab = True
@@ -178,11 +202,14 @@ class Window(QMainWindow):
                     font-size: 20px;   /* Set font size */
                 }
             """
+        self.currentEffect = "Yolov8m"
+        self.pastEffect = ""
+        self.firstCycle = True
         
         self.plot_graph = pg.PlotWidget()
         self.plot_graph.setBackground("w")
         pen = pg.mkPen(color=(0, 0, 0))
-        self.plot_graph.setTitle(f"Number of people found", color="b", size="20pt")
+        self.plot_graph.setTitle(f"{self.currentEffect} Number of people found", color="b", size="20pt")
         styles = {"color": "blue", "font-size": "14pt"}
         self.plot_graph.setLabel("bottom", "seconds", **styles)
         self.plot_graph.addLegend()
@@ -210,7 +237,7 @@ class Window(QMainWindow):
         self.timerD.setInterval(1000)
         self.timerD.timeout.connect(self.update_plot)
 
-        self.windowTitle = "yolov8 qtv3.1"
+        self.windowTitle = "qtv3.1"
         self.setAcceptDrops(True)
 
         self.menu_bar = QHBoxLayout()
@@ -240,8 +267,8 @@ class Window(QMainWindow):
         self.preset_dropdown = QComboBox()
         self.preset_dropdown.setStyleSheet(self.stylesheet)
 
-        self.preset_dropdown.addItem("Live Tokyo GMT+9")
         self.preset_dropdown.addItem("Live Thailand GMT+7")
+        self.preset_dropdown.addItem("Live Tokyo GMT+9")
         self.preset_dropdown.addItem("Live St. Petersburg GMT+3")
         self.preset_dropdown.addItem("Live Finland GMT+2")
         self.preset_dropdown.addItem("Live Dublin GMT")
@@ -256,7 +283,7 @@ class Window(QMainWindow):
         self.url_bar.setPlaceholderText("https://youtu.be/jNQXAC9IVRw?si=sliH5ck690ZVjVUo")
         self.url_bar.setStyleSheet(self.stylesheet)
 
-        self.effect_label = QLabel("Effect")
+        self.effect_label = QLabel("Models")
         self.effect_label.setStyleSheet(self.stylesheet)
 
         self.effect_dropdown = QComboBox()
@@ -276,6 +303,11 @@ class Window(QMainWindow):
         self.exit_button.setStyleSheet(self.stylesheet)
 
         self.effect_dropdown.addItem("Yolov8m")
+        self.effect_dropdown.addItem("Yolov8s")
+        self.effect_dropdown.addItem("Yolov8l")
+        self.effect_dropdown.addItem("Yolov7m")
+        self.effect_dropdown.addItem("Yolov5m")
+        self.effect_dropdown.addItem("Yolov11m")
 
         self.menu_bar.addWidget(self.file_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.preset_label, alignment=Qt.AlignTop)
@@ -332,11 +364,15 @@ class Window(QMainWindow):
         self.fps_out_label = QLabel("Output FPS: " + str(self.newFPS))
         self.fps_out_label.setStyleSheet(self.stylesheet)
 
+        self.fps_ratio_label = QLabel("FPS Out/In: ")
+        self.fps_ratio_label.setStyleSheet(self.stylesheet)
+
         self.video_controls.addWidget(self.live_button)
         self.video_controls.addWidget(self.frame_reset_button)
         self.video_controls.addWidget(self.fps_in_label)
         self.video_controls.addWidget(self.fps_in)
         self.video_controls.addWidget(self.fps_out_label)
+        self.video_controls.addWidget(self.fps_ratio_label)
         self.video_controls.addWidget(self.pause_button)
         self.video_controls.addWidget(self.b_frame_button)
         self.video_controls.addWidget(self.f_frame_button)
@@ -358,7 +394,12 @@ class Window(QMainWindow):
         self.setCentralWidget(container)
 
         self.effects = {
-            "Yolov8m": self.apply_yolov8m,
+            "Yolov8m":   self.apply_yolo,
+            "Yolov8s":   self.apply_yolo,
+            "Yolov8l":   self.apply_yolo,
+            #"Yolov7m":   self.apply_yolov7m,
+            "Yolov5m":   self.apply_yolo,
+            "Yolov11m":  self.apply_yolo,
             "Grayscale": self.apply_grayscale,
         }
 
@@ -479,7 +520,7 @@ class Window(QMainWindow):
                     self.timer.start(self.delay)
                     self.fps_timer.start(1000)
 
-                    if self.currentEffect == "Yolov8m":
+                    if "Yolo" in self.currentEffect:
                         self.close_graph()
                         self.show_graph()
                         self.display(self.currentFrame, self.processed_label)
@@ -518,7 +559,7 @@ class Window(QMainWindow):
                 self.timer.start(self.delay)
                 self.fps_timer.start(1000)
 
-                if self.currentEffect == "Yolov8m":
+                if "Yolo" in self.currentEffect:
                     self.close_graph()
                     self.show_graph()
                     self.display(self.currentFrame, self.processed_label)
@@ -558,7 +599,7 @@ class Window(QMainWindow):
                 self.timer.start(self.delay)
                 self.fps_timer.start(1000)
 
-                if self.currentEffect == "Yolov8m":
+                if "Yolo" in self.currentEffect:
                     self.close_graph()
                     self.show_graph()
                     self.display(self.currentFrame, self.processed_label)
@@ -609,7 +650,7 @@ class Window(QMainWindow):
                     self.timer.start(self.delay)
                     self.fps_timer.start(1000)
 
-                    if self.currentEffect == "Yolov8m":
+                    if "Yolo" in self.currentEffect:
                         self.close_graph()
                         self.show_graph()
                         self.display(self.currentFrame, self.processed_label)
@@ -704,40 +745,54 @@ class Window(QMainWindow):
             pass
     
     def set_effect(self):
+        if not self.firstCycle:
+            self.pastEffect = self.currentEffect
         self.currentEffect = self.effect_dropdown.currentText()
 
-        if (self.currentEffect == "Yolov8m"):
-            self.clear_option_layout()
-            self.options_label = QLabel("Target: ")
-            self.options_label.setStyleSheet(self.stylesheet)
-            self.options_dropdown = QComboBox()
-            self.options_dropdown.setStyleSheet(self.stylesheet)
+        print("past: " + self.pastEffect)
+        print("current: " + self.currentEffect)
 
-            self.options_dropdown.addItem("person")
-            self.options_dropdown.addItem("car")
-            self.options_dropdown.addItem("bus")
-            self.options_dropdown.addItem("truck")
-            self.options_dropdown.addItem("bicycle")
-            self.options_dropdown.addItem("motorcycle")
-            self.options_dropdown.currentIndexChanged.connect(self.set_target)
+        if ("Yolo" in self.currentEffect):
+            if ("Yolo" in self.pastEffect):
+                if self.targetString == "person":
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of people found", color="b", size="20pt")
+                elif self.targetString == "bus":
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of buses found", color="b", size="20pt")
+                else:
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of {self.targetString}s found", color="b", size="20pt")
+            else:
+                self.clear_option_layout()
+                self.options_label = QLabel("Target: ")
+                self.options_label.setStyleSheet(self.stylesheet)
+                self.options_dropdown = QComboBox()
+                self.options_dropdown.setStyleSheet(self.stylesheet)
 
-            self.cmap_left = QLabel("Low Confidence")
-            self.cmap_left.setStyleSheet(self.stylesheet)
-            self.cmap_right = QLabel("High Confidence")
-            self.cmap_right.setStyleSheet(self.stylesheet)
-            self.cmap_key = QLabel("")
+                self.options_dropdown.addItem("person")
+                self.options_dropdown.addItem("car")
+                self.options_dropdown.addItem("bus")
+                self.options_dropdown.addItem("truck")
+                self.options_dropdown.addItem("bicycle")
+                self.options_dropdown.addItem("motorcycle")
+                self.options_dropdown.currentIndexChanged.connect(self.set_target)
 
-            self.cmap_key.setPixmap(self.cmap_pixmap)
+                self.cmap_left = QLabel("-")
+                self.cmap_left.setStyleSheet(self.stylesheet)
+                self.cmap_right = QLabel("+")
+                self.cmap_right.setStyleSheet(self.stylesheet)
+                self.cmap_key = QLabel("")
 
-            self.options.addWidget(self.options_label)
-            self.options.addWidget(self.options_dropdown)
-            self.options.addWidget(self.cmap_left)
-            self.options.addWidget(self.cmap_key)
-            self.options.addWidget(self.cmap_right)
+                self.cmap_key.setPixmap(self.cmap_pixmap)
+
+                self.options.addWidget(self.options_label)
+                self.options.addWidget(self.options_dropdown)
+                self.options.addWidget(self.cmap_left)
+                self.options.addWidget(self.cmap_key)
+                self.options.addWidget(self.cmap_right)
+
         else:
             self.clear_option_layout()
 
-        if self.currentEffect == "Yolov8m" and self.current_media == "vid":
+        if "Yolo" in self.currentEffect and self.current_media == "vid":
             self.show_graph()
         else:
             self.close_graph()
@@ -746,17 +801,19 @@ class Window(QMainWindow):
             self.convert_image()
         if self.current_media == "vid" and self.paused:
             self.convert_image()
+
+        self.firstCycle = False
     
     def set_target(self):
         if self.targetString != self.options_dropdown.currentText():
             self.targetString = self.options_dropdown.currentText()
             self.target = self.targetKeys[self.targetNames.index(self.targetString)]
             if self.targetString == "person":
-                self.plot_graph.setTitle(f"Number of people found", color="b", size="20pt")
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of people found", color="b", size="20pt")
             elif self.targetString == "bus":
-                self.plot_graph.setTitle(f"Number of buses found", color="b", size="20pt")
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of buses found", color="b", size="20pt")
             else:
-                self.plot_graph.setTitle(f"Number of {self.targetString}s found", color="b", size="20pt")
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of {self.targetString}s found", color="b", size="20pt")
             if self.current_media != "vid":
                 self.convert_image()
             else:
@@ -804,8 +861,10 @@ class Window(QMainWindow):
             self.timer.start(self.delay)
     
     def find_fps(self):
-        self.fps_out_label.setText("Output FPS: " + str(self.newFPS))
-        self.newFPS = 0
+        if not self.paused:
+            self.fps_out_label.setText("Output FPS: " + str(self.newFPS))
+            self.fps_ratio_label.setText(f"FPS Out/In: {self.newFPS / self.ogFPS:.2f}")
+            self.newFPS = 0
 
     def frame_reset(self):
         if self.current_media == "vid":
@@ -818,10 +877,19 @@ class Window(QMainWindow):
             self.cap.release()
             self.cap = cv2.VideoCapture(self.video_url)
     
-    def apply_yolov8m(self, frame):
+    def apply_yolo(self, frame):
         if frame is not None:
             outframe = frame.copy()
-            output = yolov8m(outframe)
+            if "Yolo" in self.currentEffect:
+                output = yolov8m(outframe)
+            if self.currentEffect == "Yolov8s":
+                output = yolov8s(outframe)
+            if self.currentEffect == "Yolov8l":
+                output = yolov8l(outframe)
+            if self.currentEffect == "Yolov5m":
+                output = yolov5m(outframe)
+            if self.currentEffect == "Yolov11m":
+                output = yolov11m(outframe)
             boxes = output[0].boxes.xyxy.cpu().numpy()
             class_ids = output[0].boxes.cls.cpu().numpy()
             confidences = output[0].boxes.conf.cpu().numpy()
@@ -834,10 +902,12 @@ class Window(QMainWindow):
                 self.max_pop = self.max_pop * 1.25
                 self.plot_graph.setYRange(0, self.max_pop)
 
-            ypos = int(outframe.shape[0] / 10)
-            scale = (outframe.shape[1] / 1000) + 1
-            width = int(scale * 2)
-            thickness =  2 if outframe.shape[1] < 720 else 4
+            xpos = int(outframe.shape[1] * 0.8)
+            ypos = int(outframe.shape[0] - 40)
+            #scale = (outframe.shape[1] / 1000) + 1
+            scale = outframe.shape[1] * 0.00078125
+            #print("Width: " + str(outframe.shape[0]) + " Heiht" + str(outframe.shape[1]))
+            thickness =  1 if outframe.shape[1] < 720 else 4
 
             for i, box in enumerate(targetBoxes):
                 x1, y1, x2, y2 = map(int, box)
@@ -846,11 +916,12 @@ class Window(QMainWindow):
                 color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
                 cv2.rectangle(outframe, (x1, y1), (x2, y2), color, thickness)
             
-            cv2.putText(outframe, f"Found: {self.pop}", (20, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
-                        scale, (0, 0, 0), (width + 5))    
-            cv2.putText(outframe, f"Found: {self.pop}", (20, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
-                                scale, (255, 255, 255), width)
+            cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                        scale, (0, 0, 0), thickness + 2)    
+            cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (255, 255, 255), thickness)
             return outframe
+    
 
     def apply_grayscale(self):
         return cv2.cvtColor(self.currentFrame, cv2.COLOR_BGR2GRAY)
