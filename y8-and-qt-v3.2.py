@@ -27,14 +27,18 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 
 import torch
 
+sys.path.append(os.path.join(os.path.dirname(__file__), 'yolov7'))
+#import yolov7
+from yolov7.utils.general import check_img_size, non_max_suppression, scale_coords
+from yolov7.models.experimental import attempt_load
+
+
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 
 yolov8s = YOLO('yolov8s.pt')
 yolov8m = YOLO('yolov8m.pt')
 yolov8l = YOLO('yolov8l.pt')
 yolov5m = YOLO('yolov5m.pt')
-#Find yolov7.pt yourself
-#yolov7m = torch.hub.load("WongKinYiu/yolov7",f"/yolov7",trust_repo=True)
 yolov11m = YOLO('yolo11m.pt')
 
 # Check if CUDA is available
@@ -45,10 +49,37 @@ if torch.cuda.is_available():
     yolov8m.to('cuda')
     yolov8l.to('cuda')
     yolov5m.to('cuda')
-    #yolov7m.to('cuda')
     yolov11m.to('cuda')
 else:
     print("CUDA is not available. Using CPU.")
+
+
+model = attempt_load('yolov7.pt', map_location='cuda')
+imgsz = 640  # Inference size (square)
+device = torch.device('cuda:0')
+stride = int(model.stride.max())  # Model stride
+imgsz = check_img_size(imgsz, s=stride)  # Ensure imgsz is a multiple of stride
+
+
+
+def pad_to_multiple(image, multiple=32):
+    h, w = image.shape[:2]
+    
+    # Calculate padding
+    new_h = (h // multiple + 1) * multiple
+    new_w = (w // multiple + 1) * multiple
+    
+    # Calculate how much to pad on each side
+    pad_top = (new_h - h) // 2
+    pad_bottom = new_h - h - pad_top
+    pad_left = (new_w - w) // 2
+    pad_right = new_w - w - pad_left
+    
+    # Apply padding
+    return cv2.copyMakeBorder(
+        image, pad_top, pad_bottom, pad_left, pad_right, 
+        borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0)  # Padding with black
+    )
 
 
 class Worker(QThread):
@@ -397,7 +428,7 @@ class Window(QMainWindow):
             "Yolov8m":   self.apply_yolo,
             "Yolov8s":   self.apply_yolo,
             "Yolov8l":   self.apply_yolo,
-            #"Yolov7m":   self.apply_yolov7m,
+            "Yolov7m":   self.apply_yolov7m,
             "Yolov5m":   self.apply_yolo,
             "Yolov11m":  self.apply_yolo,
             "Grayscale": self.apply_grayscale,
@@ -411,7 +442,7 @@ class Window(QMainWindow):
             "Live Dublin GMT": "https://www.youtube.com/live/u4UZ4UvZXrg?si=A5FSMhUJjX0gY7Yb",
             "Live St. Petersburg GMT+3": "https://www.youtube.com/live/h1wly909BYw?si=Boe9gLUcLcp6Za55",
             "Live Tokyo GMT+9": "https://www.youtube.com/live/DjdUEyjx8GM?si=-umo4EzSyDXDNkqd",
-            "Live Thailand GMT+7": "https://www.youtube.com/live/Q71sLS8h9a4?si=bGNflTmuPwexNC2k ",
+            "Live Thailand GMT+7": "https://www.youtube.com/live/Q71sLS8h9a4?si=bGNflTmuPwexNC2k",
             "Prerecorded Nascar": "https://youtu.be/HU7wIi3VriY?si=IVr5EqfsOnMgm9Ya",
         }
         
@@ -904,9 +935,7 @@ class Window(QMainWindow):
 
             xpos = int(outframe.shape[1] * 0.8)
             ypos = int(outframe.shape[0] - 40)
-            #scale = (outframe.shape[1] / 1000) + 1
             scale = outframe.shape[1] * 0.00078125
-            #print("Width: " + str(outframe.shape[0]) + " Heiht" + str(outframe.shape[1]))
             thickness =  1 if outframe.shape[1] < 720 else 4
 
             for i, box in enumerate(targetBoxes):
@@ -921,6 +950,54 @@ class Window(QMainWindow):
             cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
                                 scale, (255, 255, 255), thickness)
             return outframe
+    
+    def apply_yolov7m(self, frame):
+        img = outframe = frame.copy()
+        img = pad_to_multiple(img, 32)
+        img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3xHxW
+        img = torch.from_numpy(img.copy()).to(device)  # Convert to tensor
+        img = img.float() / 255.0  # Normalize to [0,1]
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)  # Add batch dimension
+
+        # Inference
+        with torch.no_grad():
+            pred = model(img, augment=False)[0]
+        pred = non_max_suppression(pred, 0.25, 0.45, agnostic=True)  # Apply NMS
+
+        # Draw results
+        pop = 0
+        xpos = int(outframe.shape[1] * 0.8)
+        ypos = int(outframe.shape[0] - 40)
+
+        #scale = (outframe.shape[1] / 1000) + 1
+        scale = outframe.shape[1] * 0.00078125
+        #print("Width: " + str(outframe.shape[0]) + " Heiht" + str(outframe.shape[1]))
+        thickness =  1 if outframe.shape[1] < 720 else 4
+
+        for det in pred:  # Process detections
+
+            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], outframe.shape).round()
+            
+            # Draw bounding boxes and labels on original image
+            for *xyxy, conf, cls in det:
+                if int(cls) == self.target:
+                    pop += 1
+                    x1, y1, x2, y2 = xyxy
+                    x1, y1, x2, y2, confidence = x1.item(), y1.item(), x2.item(), y2.item(), conf.item()
+                    
+                    rgba_color = plt.get_cmap('rainbow')(confidence)
+                    color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
+                    cv2.rectangle(outframe, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
+                    
+
+        self.pop = pop
+
+        cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (0, 0, 0), thickness + 2)    
+        cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (255, 255, 255), thickness)
+        return outframe
     
 
     def apply_grayscale(self):
