@@ -1,1 +1,1 @@
-Qt app to use to test Yolov8
+Qt app to use to test Yolov8s-l, Yolov5m, and Yolov11m
