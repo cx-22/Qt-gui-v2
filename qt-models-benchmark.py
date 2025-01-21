@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsPixmapItem,
     QSplitter,
+    QSplitterHandle,
     QSizePolicy
 )
 from PyQt5.QtGui import QPixmap, QImage, QStandardItem
@@ -40,7 +41,8 @@ yolov8l = YOLO('yolov8l.pt')
 yolov5m = YOLO('yolov5m.pt')
 yolov11m = YOLO('yolo11m.pt')
 
-# Check if CUDA is available
+hasGPU = False
+
 if torch.cuda.is_available():
     #print("CUDA is available. GPU will be used.")
     print("GPU Name:", torch.cuda.get_device_name(0))
@@ -49,6 +51,7 @@ if torch.cuda.is_available():
     yolov8l.to('cuda')
     yolov5m.to('cuda')
     yolov11m.to('cuda')
+    hasGPU = True
 else:
     print("CUDA is not available. Using CPU.")
 
@@ -209,41 +212,83 @@ class CheckableComboBox(QComboBox):
         text_string = ', '.join(text_container)
         self.lineEdit().setText(text_string)
 
-class ImageViewerWidget(QWidget):
-    def __init__(self, pixmap1, pixmap2, parent=None):
+class BetterSplitter(QSplitter):
+    def __init__(self, orientation, parent=None):
+        super().__init__(orientation, parent)
+
+        self.setHandleWidth(20)
+
+    def createHandle(self):
+        return BetterSplitterHandle(self.orientation(), self)
+
+class BetterSplitterHandle(QSplitterHandle):
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+
+        if orientation == Qt.Horizontal:
+            self.symbol = QLabel("||", self)
+        else:
+            self.symbol = QLabel("==", self)
+
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.symbol)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+class InputView(QGraphicsView):
+    def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Main layout
+    def wheelEvent(self, event):
+        pass
+
+class ImageViewerWidget(QWidget):
+    def __init__(self, pixmap1, pixmap2, window, parent=None):
+        super().__init__(parent)
+
+        self.win = window
+
         main_layout = QVBoxLayout(self)
         self.setLayout(main_layout)
 
-        # Create a QSplitter
-        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter = BetterSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
 
-        # Create QGraphicsView and QGraphicsScene for both images
-        self.view1 = QGraphicsView()
+        self.view1 = InputView()
         self.scene1 = QGraphicsScene()
+
+        self.view1.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view1.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+
+        self.view1.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.view1.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
         self.view1.setScene(self.scene1)
-        self.view1.setAlignment(Qt.AlignCenter)  # Align content to the center of the view
+        self.view1.setAlignment(Qt.AlignCenter)
         self.splitter.addWidget(self.view1)
 
         self.view2 = QGraphicsView()
         self.scene2 = QGraphicsScene()
         self.view2.setScene(self.scene2)
-        self.view2.setAlignment(Qt.AlignCenter)  # Align content to the center of the view
+        self.view2.setAlignment(Qt.AlignCenter)
         self.splitter.addWidget(self.view2)
 
-        # Store pixmaps and add images to the respective scenes
         self.pixmap1 = pixmap1
         self.pixmap2 = pixmap2
-        self.add_image_to_scene(self.view1, self.scene1, pixmap1)
-        self.add_image_to_scene(self.view2, self.scene2, pixmap2)
 
-    def add_image_to_scene(self, view, scene, pixmap):
+        self.pixmapItem = None
+        
+        self.add_image_to_scene(self.view1, self.scene1, pixmap1, False)
+        self.add_image_to_scene(self.view2, self.scene2, pixmap2, False)
+
+    def add_image_to_scene(self, view, scene, pixmap, isLeft):
         pixmap_item = QGraphicsPixmapItem(pixmap)
+        if isLeft:
+            self.pixmapItem = pixmap_item
         pixmap_item.setTransformationMode(Qt.SmoothTransformation)
-        scene.clear()  # Clear previous items
+        scene.clear()
         scene.addItem(pixmap_item)
 
         def resize_event():
@@ -261,12 +306,24 @@ class ImageViewerWidget(QWidget):
 
         view.resizeEvent = lambda event: resize_event()
         resize_event()
+    
+    def wheelEvent(self, event):
+        zoom_in_factor = 1.25
+        zoom_out_factor = 0.8
+
+        if event.angleDelta().y() > 0:
+            self.view1.scale(zoom_in_factor, zoom_in_factor)
+        else:
+            self.view1.scale(zoom_out_factor, zoom_out_factor)
+        
+        #if self.win.current_media != "vid":
+        #    self.win.convert_image()
 
     def load_left_image(self, pixmap):
-        self.add_image_to_scene(self.view1, self.scene1, pixmap)
+        self.add_image_to_scene(self.view1, self.scene1, pixmap, True)
 
     def load_right_image(self, pixmap):
-        self.add_image_to_scene(self.view2, self.scene2, pixmap)
+        self.add_image_to_scene(self.view2, self.scene2, pixmap, False)
     
     def reset_size(self):
         total_height = self.splitter.height()
@@ -282,6 +339,10 @@ class Window(QMainWindow):
         screen = QApplication.primaryScreen()
         self.screen_width = screen.size().width()
         self.screen_height = screen.size().height()
+
+        self.um = True
+        self.firstWidth = 0
+        self.firstHeight = 0
 
         self.stylesheet = """
             QLabel, QPushButton, QSpinBox, QComboBox, QLineEdit {
@@ -318,7 +379,6 @@ class Window(QMainWindow):
         self.fullscreen = True
         self.paused = True
         self.showMiddle = False
-        self.showClean = True
         self.ogFPS = 30
         self.newFPS = 0
         self.counter = 0
@@ -356,7 +416,7 @@ class Window(QMainWindow):
         self.max_pop = 20
 
         self.currentPreprocess = "None"
-        self.currentModel = "Yolov8m"
+        self.currentModel = "Yolov5m"
         self.pastModel = ""
         self.firstCycle = True
         
@@ -417,6 +477,15 @@ class Window(QMainWindow):
         self.file_dropdown.addItem("Load Image or Video")
         self.file_dropdown.addItem("Save Output as Image")
         self.file_dropdown.currentIndexChanged.connect(self.set_file_menu)
+
+        self.device = 0
+        if hasGPU:
+            self.device_button = QPushButton("Swap to CPU")
+            self.device_button.clicked.connect(self.swap_devices)
+        else:
+            self.device_button = QPushButton("Using CPU")
+        
+        self.device_button.setStyleSheet(self.stylesheet)
 
         self.preset_label = QLabel("Preset Cameras")
         self.preset_label.setStyleSheet(self.stylesheet)
@@ -520,10 +589,10 @@ class Window(QMainWindow):
         self.exit_button.clicked.connect(self.exit_qt)
         self.exit_button.setStyleSheet(self.stylesheet)
 
-        self.model_dropdown.addItem("Yolov8m")
-        self.model_dropdown.addItem("Yolov8s")
-        self.model_dropdown.addItem("Yolov8l")
         self.model_dropdown.addItem("Yolov5m")
+        self.model_dropdown.addItem("Yolov8s")
+        self.model_dropdown.addItem("Yolov8m")
+        self.model_dropdown.addItem("Yolov8l")
         self.model_dropdown.addItem("Yolov11m")
 
         self.menu_bar.addWidget(self.file_dropdown, alignment=Qt.AlignTop)
@@ -533,6 +602,7 @@ class Window(QMainWindow):
         self.menu_bar.addWidget(self.model_label, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.model_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.mini_button, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.device_button, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.fullscreen_button, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.exit_button, alignment=Qt.AlignTop)
         
@@ -557,10 +627,6 @@ class Window(QMainWindow):
         self.show_middle_button = QPushButton("Show Intermediate")
         self.show_middle_button.clicked.connect(self.toggle_show_middle)
         self.show_middle_button.setStyleSheet(self.stylesheet)
-
-        self.show_clean_button = QPushButton("Show Full Processes")
-        self.show_clean_button.clicked.connect(self.toggle_show_clean)
-        self.show_clean_button.setStyleSheet(self.stylesheet)
 
         self.options_label = QLabel("Target: ")
         self.options_label.setStyleSheet(self.stylesheet)
@@ -591,9 +657,13 @@ class Window(QMainWindow):
         basePixmap = QPixmap(480, 640)
         basePixmap.fill(Qt.black)
 
-        self.io_viewer = ImageViewerWidget(basePixmap, basePixmap)
+        self.io_viewer = ImageViewerWidget(basePixmap, basePixmap, self)
 
         self.io_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self.clear_button = QPushButton("Clear Graph")
+        self.clear_button.clicked.connect(lambda: (self.close_graph(), self.show_graph()))
+        self.clear_button.setStyleSheet(self.stylesheet)
 
         self.pause_button = QPushButton("Pause")
         self.pause_button.clicked.connect(self.toggle_pause)
@@ -631,6 +701,7 @@ class Window(QMainWindow):
         self.fps_ratio_label = QLabel("FPS Out/In: ")
         self.fps_ratio_label.setStyleSheet(self.stylesheet)
 
+        self.video_controls.addWidget(self.clear_button)
         self.video_controls.addWidget(self.live_button)
         self.video_controls.addWidget(self.frame_reset_button)
         self.video_controls.addWidget(self.fps_in_label)
@@ -653,12 +724,11 @@ class Window(QMainWindow):
         self.mid_widget.setLayout(self.io_bar)
         self.graph_widget.setLayout(self.graph_space)
 
-        self.splitter = QSplitter(Qt.Vertical)  # Horizontal splitter
+        self.splitter = BetterSplitter(Qt.Vertical)  # Horizontal splitter
 
         self.splitter.addWidget(self.mid_widget)
         self.splitter.addWidget(self.plot_graph)
 
-        self.splitter.setHandleWidth(10)  # Make the handle thicker
         self.splitter.setStyleSheet("QSplitter::handle { background-color: #CCCCCC; }")  # Set handle color to black
 
         self.main_layout = QVBoxLayout()
@@ -670,12 +740,11 @@ class Window(QMainWindow):
         self.setCentralWidget(container)
 
         self.models = {
-            "Yolov8m":   self.apply_yolo,
-            "Yolov8s":   self.apply_yolo,
-            "Yolov8l":   self.apply_yolo,
             "Yolov5m":   self.apply_yolo,
-            "Yolov11m":  self.apply_yolo,
-            "Grayscale": self.apply_grayscale,
+            "Yolov8s":   self.apply_yolo,
+            "Yolov8m":   self.apply_yolo,
+            "Yolov8l":   self.apply_yolo,
+            "Yolov11m":  self.apply_yolo
         }
 
         self.preset_dropdown.currentIndexChanged.connect(self.load_preset)
@@ -685,6 +754,7 @@ class Window(QMainWindow):
         self.currentFileExt = ""
         self.load_preset()
         self.set_model()
+        self.preprocess_dropdown.setCurrentText("Degrade 1")
 
     def update_plot(self):
         self.timeList = self.timeList[1:]
@@ -692,6 +762,10 @@ class Window(QMainWindow):
         self.popList = self.popList[1:]
         self.popList.append(self.pop)
         self.line.setData(self.timeList, self.popList)
+
+        if max(self.popList) >= (0.75 * self.max_pop):
+            self.max_pop = max(self.popList) + 5
+            self.plot_graph.setYRange(0, self.max_pop)
 
     def show_graph(self):
         self.plot_graph.show()
@@ -703,28 +777,54 @@ class Window(QMainWindow):
         self.timerD.stop()
         self.timeList = [0] * 10
         self.popList = [0] * 10
+        self.max_pop = 20
+        self.plot_graph.setYRange(0, self.max_pop)
 
     def video_manage(self):
         ret, frame = self.cap.read()
         if ret:
-            self.currentFrame = frame
+            self.currentFrame = frame.copy()
+
             if not self.currentPreprocess == "None":
                 self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
             if self.showMiddle and not self.currentPreprocess == "None":
-                    self.new_display(self.currentPreproccessedFrame, "left")
+                self.new_display(self.currentPreproccessedFrame, "left")
             else:
-                self.new_display(self.currentFrame, "left")
+                self.new_display(frame, "left")
             if self.is_detached_left:
                 self.detach_left.display(frame)
             if self.frameGrab:
-                self.frameGrab = False
+
+                visible_scene_rect = self.io_viewer.view1.mapToScene(self.io_viewer.view1.viewport().rect()).boundingRect()
+
+                pixmap_scene_rect = self.io_viewer.pixmapItem.sceneBoundingRect()
+                visible_rect = visible_scene_rect.intersected(pixmap_scene_rect)
+
+                mapped_top_left = self.io_viewer.pixmapItem.mapFromScene(visible_rect.topLeft())
+                mapped_bottom_right = self.io_viewer.pixmapItem.mapFromScene(visible_rect.bottomRight())
+
+                x = int(mapped_top_left.x())
+                y = int(mapped_top_left.y())
+                width = int(mapped_bottom_right.x() - mapped_top_left.x())
+                height = int(mapped_bottom_right.y() - mapped_top_left.y())
+
+                pixmap_rect = self.io_viewer.pixmapItem.boundingRect()
+                scaling_factor_x = self.currentFrame.shape[1] / pixmap_rect.width()
+                scaling_factor_y = self.currentFrame.shape[0] / pixmap_rect.height()
+
+                x = int(x * scaling_factor_x)
+                y = int(y * scaling_factor_y)
+                width = int(width * scaling_factor_x)
+                height = int(height * scaling_factor_y)
+
                 if self.currentPreprocess == "None":
-                    new_worker = Worker(self, self.currentFrame, None)
+                    fake_frame = self.currentFrame[y:y + height, x:x + width]
                 else:
-                    if self.showClean:
-                        new_worker = Worker(self, self.currentPreproccessedFrame, self.currentFrame)
-                    else:
-                        new_worker = Worker(self, self.currentPreproccessedFrame, self.currentPreproccessedFrame)
+                    fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
+
+                self.frameGrab = False
+
+                new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width])
                 new_worker.finished.connect(self.on_worker_finished)
                 self.workers.append(new_worker)
                 new_worker.start()
@@ -913,6 +1013,22 @@ class Window(QMainWindow):
             if save_path:
                 cv2.imwrite(save_path, self.currentOutFrame)
         
+    def swap_devices(self):
+        if self.device == 0:
+            yolov8s.to('cpu')
+            yolov8m.to('cpu')
+            yolov8l.to('cpu')
+            yolov5m.to('cpu')
+            yolov11m.to('cpu')
+            self.device = 1
+        else:
+            yolov8s.to('cuda')
+            yolov8m.to('cuda')
+            yolov8l.to('cuda')
+            yolov5m.to('cuda')
+            yolov11m.to('cuda')
+            self.device = 0
+
     def minimize(self):
         self.setWindowState(Qt.WindowMinimized)
         self.fullscreen = False
@@ -936,15 +1052,39 @@ class Window(QMainWindow):
 
     def convert_image(self):
         if self.currentFrame is not None:
+            visible_scene_rect = self.io_viewer.view1.mapToScene(self.io_viewer.view1.viewport().rect()).boundingRect()
+
+            pixmap_scene_rect = self.io_viewer.pixmapItem.sceneBoundingRect()
+            visible_rect = visible_scene_rect.intersected(pixmap_scene_rect)
+
+            mapped_top_left = self.io_viewer.pixmapItem.mapFromScene(visible_rect.topLeft())
+            mapped_bottom_right = self.io_viewer.pixmapItem.mapFromScene(visible_rect.bottomRight())
+
+            x = int(mapped_top_left.x())
+            y = int(mapped_top_left.y())
+            width = int(mapped_bottom_right.x() - mapped_top_left.x())
+            height = int(mapped_bottom_right.y() - mapped_top_left.y())
+
+            pixmap_rect = self.io_viewer.pixmapItem.boundingRect()
+            scaling_factor_x = self.currentFrame.shape[1] / pixmap_rect.width()
+            scaling_factor_y = self.currentFrame.shape[0] / pixmap_rect.height()
+
+            x = int(x * scaling_factor_x)
+            y = int(y * scaling_factor_y)
+            width = int(width * scaling_factor_x)
+            height = int(height * scaling_factor_y)
+            
+            if self.currentPreprocess == "None":
+                fake_frame = self.currentFrame[y:y + height, x:x + width]
+            else:
+                fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
+
+
             #self.fps_out_label.setText("Output FPS: 0")
-            frame = self.currentFrame.copy()
+            frame = fake_frame.copy()
             if not self.currentPreprocess == "None":
                 self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
-                if self.showClean:
-                    self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, frame)
-                else:
-                    proframe = self.currentPreproccessedFrame.copy()
-                    self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, proframe)
+                self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, frame)
             else:
                 self.currentOutFrame = self.models[self.currentModel](frame, frame)
 
@@ -1048,7 +1188,6 @@ class Window(QMainWindow):
                 self.options.addWidget(self.cmap_left)
                 self.options.addWidget(self.cmap_key)
                 self.options.addWidget(self.cmap_right)
-                self.options.addWidget(self.show_clean_button)
                 if self.current_media == "vid":
                     self.close_graph()
                     self.show_graph()
@@ -1106,16 +1245,12 @@ class Window(QMainWindow):
         else:
             self.showMiddle = True
             self.show_middle_button.setText("Show Original")
-        self.convert_image()
 
-    def toggle_show_clean(self):
-        if self.showClean:
-            self.showClean = False
-            self.show_clean_button.setText("Show Clean")
-        else:
-            self.showClean = True
-            self.show_clean_button.setText("Show Full Processes")
-        self.convert_image()
+        if self.current_media == "img":
+            self.convert_image()
+        if self.current_media == "vid" and self.paused:
+            self.convert_image()
+
             
     def b_frame(self):
         if self.current_media == "vid" and self.paused and not self.liveVideo:
@@ -1160,9 +1295,8 @@ class Window(QMainWindow):
             self.cap.release()
             self.cap = cv2.VideoCapture(self.video_url)
     
-    def apply_yolo(self, frameI, frameO):
+    def apply_yolo(self, frameI, frameOut):
         frameIn = frameI.copy()
-        frameOut = frameO.copy()
         if frameIn is not None:
             if "Yolo" in self.currentModel:
                 output = yolov8m(frameIn)
