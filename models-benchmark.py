@@ -91,13 +91,16 @@ def pad_to_multiple(image, multiple=32):
 
 
 class Worker(QThread):
-    def __init__(self, win, frame1, frame2):
+    def __init__(self, win, frame1, frame2, process):
         super().__init__()
         self.window = win
         self.frame1 = frame1
         self.frame2 = frame2
+        self.process = process
 
     def run(self):
+            if self.process:
+                self.frame1 = self.window.preprocesses[self.window.currentPreprocess](self.frame1)
             if not self.frame2 is None:
                 self.outframe = self.window.models[self.window.currentModel](self.frame1, self.frame2)
             else:
@@ -263,7 +266,6 @@ class BetterSplitterHandle(QSplitterHandle):
             self.symbol = QLabel("||", self)
         else:
             self.symbol = QLabel("==", self)
-
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.symbol)
@@ -822,9 +824,8 @@ class Window(QMainWindow):
         if ret:
             self.currentFrame = frame.copy()
 
-            if not self.currentPreprocess == "None":
-                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
             if self.showMiddle and not self.currentPreprocess == "None":
+                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
                 self.new_display(self.currentPreproccessedFrame, "left")
             else:
                 self.new_display(frame, "left")
@@ -854,14 +855,21 @@ class Window(QMainWindow):
                 width = int(width * scaling_factor_x)
                 height = int(height * scaling_factor_y)
 
+                new_worker = None
+
                 if self.currentPreprocess == "None":
                     fake_frame = self.currentFrame[y:y + height, x:x + width]
+                    new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width], False)
                 else:
-                    fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
+                    if self.showMiddle:
+                        fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
+                        new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width], False)
+                    else:
+                        fake_frame = self.currentFrame[y:y + height, x:x + width]
+                        new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width], True)
 
                 self.frameGrab = False
 
-                new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width])
                 new_worker.finished.connect(self.on_worker_finished)
                 self.workers.append(new_worker)
                 new_worker.start()
@@ -1051,6 +1059,7 @@ class Window(QMainWindow):
                 cv2.imwrite(save_path, self.currentOutFrame)
         
     def swap_devices(self):
+        self.kill_workers()
         if self.device == 0:
             yolov8s.to('cpu')
             yolov8m.to('cpu')
@@ -1058,6 +1067,7 @@ class Window(QMainWindow):
             yolov5m.to('cpu')
             yolov11m.to('cpu')
             self.device = 1
+            self.device_button.setText("Swap to GPU")
         else:
             yolov8s.to('cuda')
             yolov8m.to('cuda')
@@ -1065,6 +1075,11 @@ class Window(QMainWindow):
             yolov5m.to('cuda')
             yolov11m.to('cuda')
             self.device = 0
+            self.device_button.setText("Swap to CPU")
+        if self.current_media == "img":
+            self.convert_image()
+        if self.current_media == "vid" and self.paused:
+            self.convert_image()
 
     def minimize(self):
         self.setWindowState(Qt.WindowMinimized)
@@ -1110,20 +1125,15 @@ class Window(QMainWindow):
             y = int(y * scaling_factor_y)
             width = int(width * scaling_factor_x)
             height = int(height * scaling_factor_y)
-            
-            if self.currentPreprocess == "None":
-                fake_frame = self.currentFrame[y:y + height, x:x + width]
-            else:
-                fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
 
+            fake_frame = self.currentFrame[y:y + height, x:x + width]
 
-            #self.fps_out_label.setText("Output FPS: 0")
             frame = fake_frame.copy()
             if not self.currentPreprocess == "None":
                 self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
                 self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, frame)
             else:
-                self.currentOutFrame = self.models[self.currentModel](frame, frame)
+                self.currentOutFrame = self.models[self.currentModel](fake_frame, fake_frame)
 
             if self.showMiddle and not self.currentPreprocess == "None":
                 self.new_display(self.currentPreproccessedFrame, "left")
@@ -1131,9 +1141,9 @@ class Window(QMainWindow):
                     self.detach_left.display(self.currentPreproccessedFrame)
                 
             else:
-                self.new_display(self.currentFrame, "left")
+                self.new_display(fake_frame, "left")
                 if self.is_detached_left:
-                    self.detach_left.display(self.currentFrame)
+                    self.detach_left.display(fake_frame)
                     
         
             self.new_display(self.currentOutFrame, "right")
