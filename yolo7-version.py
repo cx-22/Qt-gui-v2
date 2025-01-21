@@ -46,6 +46,8 @@ yolov8l = YOLO('yolov8l.pt')
 yolov5m = YOLO('yolov5m.pt')
 yolov11m = YOLO('yolo11m.pt')
 
+gpu = False
+
 # Check if CUDA is available
 if torch.cuda.is_available():
     print("CUDA is available. GPU will be used.")
@@ -55,13 +57,22 @@ if torch.cuda.is_available():
     yolov8l.to('cuda')
     yolov5m.to('cuda')
     yolov11m.to('cuda')
+    gpu = True
 else:
     print("CUDA is not available. Using CPU.")
 
+device = None
+model = None
 
-model = attempt_load('yolov7.pt', map_location='cuda')
+if gpu:
+    device = torch.device('cuda')  # Set device to GPU
+    model = attempt_load('yolov7.pt', map_location=device)  # Load model to GPU
+else:
+    device = torch.device('cpu')  # Set device to CPU
+    model = attempt_load('yolov7.pt', map_location=device)  # Load model to CPU
+
 imgsz = 640  # Inference size (square)
-device = torch.device('cuda:0')
+#device = torch.device('cuda:0')
 stride = int(model.stride.max())  # Model stride
 imgsz = check_img_size(imgsz, s=stride)  # Ensure imgsz is a multiple of stride
 

@@ -33,6 +33,11 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QEvent, QSettings
 
 import torch
 
+sys.path.append(os.path.join(os.path.dirname(__file__), 'yolov7'))
+#import yolov7
+from yolov7.utils.general import check_img_size, non_max_suppression, scale_coords
+from yolov7.models.experimental import attempt_load
+
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 
 yolov8s = YOLO('yolov8s.pt')
@@ -54,6 +59,35 @@ if torch.cuda.is_available():
     hasGPU = True
 else:
     print("CUDA is not available. Using CPU.")
+
+
+if hasGPU:
+    device = torch.device('cuda')  # Set device to GPU
+    model = attempt_load('yolov7.pt', map_location=device)  # Load model to GPU
+else:
+    device = torch.device('cpu')  # Set device to CPU
+    model = attempt_load('yolov7.pt', map_location=device)  # Load model to CPU
+
+imgsz = 640  # Inference size (square)
+stride = int(model.stride.max())  # Model stride
+imgsz = check_img_size(imgsz, s=stride)  # Ensure imgsz is a multiple of stride
+
+def pad_to_multiple(image, multiple=32):
+    h, w = image.shape[:2]
+    
+    new_h = (h // multiple + 1) * multiple
+    new_w = (w // multiple + 1) * multiple
+    
+    pad_top = (new_h - h) // 2
+    pad_bottom = new_h - h - pad_top
+    pad_left = (new_w - w) // 2
+    pad_right = new_w - w - pad_left
+    
+    # Apply padding
+    return cv2.copyMakeBorder(
+        image, pad_top, pad_bottom, pad_left, pad_right, 
+        borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0)
+    )
 
 
 class Worker(QThread):
@@ -591,6 +625,7 @@ class Window(QMainWindow):
         self.exit_button.setStyleSheet(self.stylesheet)
 
         self.model_dropdown.addItem("Yolov5m")
+        self.model_dropdown.addItem("Yolov7m")
         self.model_dropdown.addItem("Yolov8s")
         self.model_dropdown.addItem("Yolov8m")
         self.model_dropdown.addItem("Yolov8l")
@@ -742,6 +777,7 @@ class Window(QMainWindow):
 
         self.models = {
             "Yolov5m":   self.apply_yolo,
+            "Yolov7m":   self.apply_yolov7m,
             "Yolov8s":   self.apply_yolo,
             "Yolov8m":   self.apply_yolo,
             "Yolov8l":   self.apply_yolo,
@@ -1341,6 +1377,51 @@ class Window(QMainWindow):
             cv2.putText(frameOut, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
                                 scale, (255, 255, 255), thickness)
             return frameOut
+    
+    def apply_yolov7m(self, frameI, frameO):
+        frameIn = frameI.copy()
+        frameOut = frameO.copy()
+        frameIn = pad_to_multiple(frameIn, 32)
+        frameIn = frameIn[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3xHxW
+        frameIn = torch.from_numpy(frameIn.copy()).to(device)  # Convert to tensor
+        frameIn = frameIn.float() / 255.0  # Normalize to [0,1]
+        if frameIn.ndimension() == 3:
+            frameIn = frameIn.unsqueeze(0)  # Add batch dimension
+
+        with torch.no_grad():
+            pred = model(frameIn, augment=False)[0]
+        pred = non_max_suppression(pred, 0.25, 0.45, agnostic=True)  # Apply NMS
+
+        pop = 0
+        xpos = int(frameOut.shape[1] * 0.8)
+        ypos = int(frameOut.shape[0] - 40)
+
+        scale = frameOut.shape[1] * 0.00078125
+        thickness =  1 if frameOut.shape[1] < 720 else 4
+        labelThickness = 1 if frameOut.shape[1] < 720 else 2
+
+        for det in pred:
+
+            det[:, :4] = scale_coords(frameIn.shape[2:], det[:, :4], frameOut.shape).round()
+            for *xyxy, conf, cls in det:
+                if int(cls) in self.currentTargetsIndex:
+                    pop += 1
+                    x1, y1, x2, y2 = xyxy
+                    x1, y1, x2, y2, confidence = x1.item(), y1.item(), x2.item(), y2.item(), conf.item()
+                    
+                    rgba_color = plt.get_cmap('rainbow')(confidence)
+                    color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
+                    cv2.rectangle(frameOut, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
+
+                    cv2.putText(frameOut, f"{self.targetNames[int(cls)]} {confidence:.2f}", (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 
+                    scale * 0.5, color, labelThickness) 
+                    
+        self.pop = pop
+        cv2.putText(frameOut, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (0, 0, 0), thickness + 2)    
+        cv2.putText(frameOut, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (255, 255, 255), thickness)
+        return frameOut
 
     def apply_grayscale(self):
         return cv2.cvtColor(self.currentFrame, cv2.COLOR_BGR2GRAY)
