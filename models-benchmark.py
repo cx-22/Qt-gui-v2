@@ -256,11 +256,8 @@ class ImageViewerWidget(QWidget):
         self.splitter = BetterSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
 
-<<<<<<< HEAD
         self.view1 = InputView()
-=======
         self.view1 = QGraphicsView()
->>>>>>> 9de43134a044208cfc8f67ca539fc821776dff31
         self.scene1 = QGraphicsScene()
 
         self.view1.setDragMode(QGraphicsView.ScrollHandDrag)
