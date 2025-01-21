@@ -25,13 +25,18 @@ from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsPixmapItem,
     QSplitter,
-    QSplitterHandle,
     QSizePolicy
 )
 from PyQt5.QtGui import QPixmap, QImage, QStandardItem
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QEvent, QSettings
 
 import torch
+
+sys.path.append(os.path.join(os.path.dirname(__file__), 'yolov7'))
+#import yolov7
+from yolov7.utils.general import check_img_size, non_max_suppression, scale_coords
+from yolov7.models.experimental import attempt_load
+
 
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
 
@@ -41,34 +46,57 @@ yolov8l = YOLO('yolov8l.pt')
 yolov5m = YOLO('yolov5m.pt')
 yolov11m = YOLO('yolo11m.pt')
 
-hasGPU = False
-
+# Check if CUDA is available
 if torch.cuda.is_available():
-    #print("CUDA is available. GPU will be used.")
+    print("CUDA is available. GPU will be used.")
     print("GPU Name:", torch.cuda.get_device_name(0))
     yolov8s.to('cuda')
     yolov8m.to('cuda')
     yolov8l.to('cuda')
     yolov5m.to('cuda')
     yolov11m.to('cuda')
-    hasGPU = True
 else:
     print("CUDA is not available. Using CPU.")
 
 
+model = attempt_load('yolov7.pt', map_location='cuda')
+imgsz = 640  # Inference size (square)
+device = torch.device('cuda:0')
+stride = int(model.stride.max())  # Model stride
+imgsz = check_img_size(imgsz, s=stride)  # Ensure imgsz is a multiple of stride
+
+
+
+def pad_to_multiple(image, multiple=32):
+    h, w = image.shape[:2]
+    
+    new_h = (h // multiple + 1) * multiple
+    new_w = (w // multiple + 1) * multiple
+    
+    pad_top = (new_h - h) // 2
+    pad_bottom = new_h - h - pad_top
+    pad_left = (new_w - w) // 2
+    pad_right = new_w - w - pad_left
+    
+    # Apply padding
+    return cv2.copyMakeBorder(
+        image, pad_top, pad_bottom, pad_left, pad_right, 
+        borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0)
+    )
+
+
+
 class Worker(QThread):
-    def __init__(self, win, frame1, frame2):
+    def __init__(self, win, frame):
         super().__init__()
         self.window = win
-        self.frame1 = frame1
-        self.frame2 = frame2
+        self.frame = frame
 
     def run(self):
-            if not self.frame2 is None:
-                self.outframe = self.window.models[self.window.currentModel](self.frame1, self.frame2)
-            else:
-                self.outframe = self.window.models[self.window.currentModel](self.frame1, self.frame1)
+            self.outframe = self.window.effects[self.window.currentEffect](self.frame)
             self.quit()
+
+
 
 class DetachedWindow(QMainWindow):
     closed_signal = pyqtSignal()
@@ -145,6 +173,8 @@ class DetachedWindow(QMainWindow):
         self.closed_signal.emit()
         event.accept()
 
+
+
 class CheckableComboBox(QComboBox):
     def __init__(self, default):
         super().__init__()
@@ -212,127 +242,78 @@ class CheckableComboBox(QComboBox):
         text_string = ', '.join(text_container)
         self.lineEdit().setText(text_string)
 
-class BetterSplitter(QSplitter):
-    def __init__(self, orientation, parent=None):
-        super().__init__(orientation, parent)
 
-        self.setHandleWidth(20)
-
-    def createHandle(self):
-        return BetterSplitterHandle(self.orientation(), self)
-
-class BetterSplitterHandle(QSplitterHandle):
-    def __init__(self, orientation, parent):
-        super().__init__(orientation, parent)
-
-        if orientation == Qt.Horizontal:
-            self.symbol = QLabel("||", self)
-        else:
-            self.symbol = QLabel("==", self)
-
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.symbol)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.setLayout(layout)
-
-class InputView(QGraphicsView):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-    def wheelEvent(self, event):
-        pass
 
 class ImageViewerWidget(QWidget):
-    def __init__(self, pixmap1, pixmap2, window, parent=None):
+    def __init__(self, pixmap1, pixmap2, parent=None):
         super().__init__(parent)
 
-        self.win = window
-
+        # Main layout
         main_layout = QVBoxLayout(self)
         self.setLayout(main_layout)
 
-        self.splitter = BetterSplitter(Qt.Horizontal)
+        # Create a QSplitter
+        self.splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
 
-<<<<<<< HEAD
-        self.view1 = InputView()
-=======
+        # Create QGraphicsView and QGraphicsScene for both images
         self.view1 = QGraphicsView()
->>>>>>> 9de43134a044208cfc8f67ca539fc821776dff31
         self.scene1 = QGraphicsScene()
-
-        self.view1.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.view1.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-
-        self.view1.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.view1.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
         self.view1.setScene(self.scene1)
-        self.view1.setAlignment(Qt.AlignCenter)
+        self.view1.setAlignment(Qt.AlignCenter)  # Align content to the center of the view
         self.splitter.addWidget(self.view1)
 
         self.view2 = QGraphicsView()
         self.scene2 = QGraphicsScene()
         self.view2.setScene(self.scene2)
-        self.view2.setAlignment(Qt.AlignCenter)
+        self.view2.setAlignment(Qt.AlignCenter)  # Align content to the center of the view
         self.splitter.addWidget(self.view2)
 
+        # Store pixmaps and add images to the respective scenes
         self.pixmap1 = pixmap1
         self.pixmap2 = pixmap2
+        self.add_image_to_scene(self.view1, self.scene1, pixmap1)
+        self.add_image_to_scene(self.view2, self.scene2, pixmap2)
 
-        self.pixmapItem = None
-        
-        self.add_image_to_scene(self.view1, self.scene1, pixmap1, False)
-        self.add_image_to_scene(self.view2, self.scene2, pixmap2, False)
-
-    def add_image_to_scene(self, view, scene, pixmap, isLeft):
+    def add_image_to_scene(self, view, scene, pixmap):
         pixmap_item = QGraphicsPixmapItem(pixmap)
-        if isLeft:
-            self.pixmapItem = pixmap_item
         pixmap_item.setTransformationMode(Qt.SmoothTransformation)
-        scene.clear()
+        scene.clear()  # Clear previous items
         scene.addItem(pixmap_item)
 
         def resize_event():
+            # Get the available size of the view
             view_width = view.viewport().width()
             view_height = view.viewport().height()
 
+            # Scale the pixmap to fit the view size (both images are the same size)
             scaled_pixmap = pixmap.scaled(view_width, view_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             pixmap_item.setPixmap(scaled_pixmap)
 
+            # Center the image in the view
             x_pos = (view_width - scaled_pixmap.width()) / 2
             y_pos = (view_height - scaled_pixmap.height()) / 2
             pixmap_item.setPos(x_pos, y_pos)
 
+            # Update the scene rect to avoid extra scroll bars
             scene.setSceneRect(0, 0, view_width, view_height)
 
+        # Connect resize event
         view.resizeEvent = lambda event: resize_event()
         resize_event()
-    
-    def wheelEvent(self, event):
-        zoom_in_factor = 1.25
-        zoom_out_factor = 0.8
-
-        if event.angleDelta().y() > 0:
-            self.view1.scale(zoom_in_factor, zoom_in_factor)
-        else:
-            self.view1.scale(zoom_out_factor, zoom_out_factor)
-        
-        #if self.win.current_media != "vid":
-        #    self.win.convert_image()
 
     def load_left_image(self, pixmap):
-        self.add_image_to_scene(self.view1, self.scene1, pixmap, True)
+        self.add_image_to_scene(self.view1, self.scene1, pixmap)
 
     def load_right_image(self, pixmap):
-        self.add_image_to_scene(self.view2, self.scene2, pixmap, False)
+        self.add_image_to_scene(self.view2, self.scene2, pixmap)
     
     def reset_size(self):
         total_height = self.splitter.height()
         splitter_position = total_height // 2
         self.splitter.setSizes([splitter_position, splitter_position])
+
+
 
 class Window(QMainWindow):
     def __init__(self):
@@ -343,10 +324,6 @@ class Window(QMainWindow):
         screen = QApplication.primaryScreen()
         self.screen_width = screen.size().width()
         self.screen_height = screen.size().height()
-
-        self.um = True
-        self.firstWidth = 0
-        self.firstHeight = 0
 
         self.stylesheet = """
             QLabel, QPushButton, QSpinBox, QComboBox, QLineEdit {
@@ -377,12 +354,10 @@ class Window(QMainWindow):
         
         self.current_media = None
         self.currentFrame = None
-        self.currentPreproccessedFrame = None
         self.currentOutFrame = None
 
         self.fullscreen = True
         self.paused = True
-        self.showMiddle = False
         self.ogFPS = 30
         self.newFPS = 0
         self.counter = 0
@@ -401,6 +376,7 @@ class Window(QMainWindow):
         self.targetKeys = list(yolov8m.names.keys())
         self.targetNames = list(yolov8m.names.values())
         self.target = 0
+        #self.targetString = "person"
         self.targetList = ['person', 'car', 'bus', 'truck', 'bicycle', 'motorcycle']
         self.currentTargetsString = ['']
         self.currentTargetsIndex = [0]
@@ -419,15 +395,14 @@ class Window(QMainWindow):
         self.pop = 0
         self.max_pop = 20
 
-        self.currentPreprocess = "None"
-        self.currentModel = "Yolov5m"
-        self.pastModel = ""
+        self.currentEffect = "Yolov8m"
+        self.pastEffect = ""
         self.firstCycle = True
         
         self.plot_graph = pg.PlotWidget()
         self.plot_graph.setBackground("w")
         pen = pg.mkPen(color=(0, 0, 0))
-        self.plot_graph.setTitle(f"{self.currentModel} Number of targets found", color="b", size="20pt")
+        self.plot_graph.setTitle(f"{self.currentEffect} Number of targets found", color="b", size="20pt")
         styles = {"color": "blue", "font-size": "14pt"}
         self.plot_graph.setLabel("bottom", "seconds", **styles)
         self.plot_graph.addLegend()
@@ -482,60 +457,11 @@ class Window(QMainWindow):
         self.file_dropdown.addItem("Save Output as Image")
         self.file_dropdown.currentIndexChanged.connect(self.set_file_menu)
 
-        self.device = 0
-        if hasGPU:
-            self.device_button = QPushButton("Swap to CPU")
-            self.device_button.clicked.connect(self.swap_devices)
-        else:
-            self.device_button = QPushButton("Using CPU")
-        
-        self.device_button.setStyleSheet(self.stylesheet)
-
         self.preset_label = QLabel("Preset Cameras")
         self.preset_label.setStyleSheet(self.stylesheet)
 
         self.preset_dropdown = QComboBox()
         self.preset_dropdown.setStyleSheet(self.stylesheet)
-
-        self.ip_camera_presets = [
-            ["GMT-8",
-            "http://204.106.237.68:88/mjpg/1/video.mjpg"],
-            ["GMT-6",
-            "http://104.207.27.126:8080/mjpg/video.mjpg",
-            "http://63.142.183.154:6103/mjpg/video.mjpg",
-            "http://lfytsquarecam.nctc.com/axis-cgi/mjpg/video.cgi",
-            "http://cam3.aerostich.com:8888/axis-cgi/mjpg/video.cgi",
-            "http://166.247.40.1:81/mjpg/video.mjpg",
-            "http://64.77.205.140:80/mjpg/video.mjpg",
-            "http://165.234.182.103:80/mjpg/video.mjpg",
-            "http://207.118.17.26:80/mjpg/video.mjpg"],
-            ["GMT-5",
-            "http://buic010-mediacam-camera2.bu.edu/image",
-            "http://98.102.110.114:82/mjpg/video.mjpg"],
-            ["GMT+1",
-            "http://82.134.72.194/mjpg/video.mjpg",
-            "http://85.13.14.79/cgi-bin/faststream.jpg",
-            "http://vroomshoopwebcam.mine.nu/axis-cgi/mjpg/video.cgi",
-            "http://kamera.wseip.edu.pl/axis-cgi/mjpg/video.cgi",
-            "http://webcam.vhs-ehingen.de/cgi-bin/faststream.jpg",
-            "http://77.106.164.66/mjpg/video.mjpg",
-            "http://90.146.10.190/mjpg/video.mjpg",
-            "http://webcam.anklam.de/axis-cgi/mjpg/video.cgi",
-            "http://webcam.minden-wlan.de:10000/axis-cgi/mjpg/video.cgi",
-            "https://arc.manlleu.cat:448/axis-cgi/mjpg/video.cgi",
-            "http://87.54.229.102/mjpg/video.mjpg",
-            "http://159.130.70.206/mjpg/video.mjpg",
-            "http://90.146.10.190/mjpg/video.mjpg",
-            "http://webcam1.vilhelmina.se/axis-cgi/mjpg/video.cgi",
-            "https://webcam.sparkassenplatz.info/cgi-bin/faststream.jpg",
-            "http://195.228.161.126:8080/mjpg/video.mjpg",
-            "http://91.187.63.35:88/mjpg/video.mjpg",
-            "http://83.91.176.170:80/mjpg/video.mjpg"],
-            ["GMT+3",
-            "http://cam1.infolink.ru/mjpg/video.mjpg"],
-            ["Unknown",
-            "https://webcam.schwaebischhall.de/mjpg/video.mjpg"],
-        ]
 
         self.preset_dropdown.addItem("Live Thailand GMT+7")
         self.preset_dropdown.addItem("Live Tokyo GMT+9")
@@ -543,43 +469,22 @@ class Window(QMainWindow):
         self.preset_dropdown.addItem("Live Finland GMT+2")
         self.preset_dropdown.addItem("Live Dublin GMT")
         self.preset_dropdown.addItem("Live Texas GMT-6")    
-        self.preset_dropdown.addItem("Live Ontario GMT-5")
+        self.preset_dropdown.addItem("Live New Orleans GMT-6")
         self.preset_dropdown.addItem("Live California GMT-8")
         self.preset_dropdown.addItem("Prerecorded Nascar")
-        
-        self.presets = {
-            "Live California GMT-8": "https://www.youtube.com/live/PtChZ0D7tkE?si=ylVs8s5BlIH2_aU6",
-            "Live Texas GMT-6": "https://www.youtube.com/live/otX-buqqS6Q?si=ulxJadK_wuVYe1SB",
-            "Live Ontario GMT-5": "https://www.youtube.com/watch?v=EPKWu223XEg",
-            "Live Finland GMT+2": "https://www.youtube.com/live/Cp4RRAEgpeU?si=xXJ9tIJUD17qD9zt",
-            "Live Dublin GMT": "https://www.youtube.com/live/u4UZ4UvZXrg?si=A5FSMhUJjX0gY7Yb",
-            "Live St. Petersburg GMT+3": "https://www.youtube.com/live/h1wly909BYw?si=Boe9gLUcLcp6Za55",
-            "Live Tokyo GMT+9": "https://www.youtube.com/live/DjdUEyjx8GM?si=-umo4EzSyDXDNkqd",
-            "Live Thailand GMT+7": "https://www.youtube.com/live/Q71sLS8h9a4?si=bGNflTmuPwexNC2k",
-            "Prerecorded Nascar": "https://youtu.be/HU7wIi3VriY?si=IVr5EqfsOnMgm9Ya",
-        }
-
-        count = 0
-        for zone in self.ip_camera_presets:
-            zone_name = zone[0]
-            for i in range(1, len(zone)):
-                preset_name = "IP Preset " + str(count) + " " + zone_name
-                self.preset_dropdown.addItem(preset_name)
-                self.presets[preset_name] = zone[i]
-                count += 1
-            
         self.preset_dropdown.addItem("")
 
         self.url_bar = QLineEdit() 
-        self.url_bar.returnPressed.connect(lambda: self.open_url(self.url_bar.text(), True))
-        self.url_bar.setPlaceholderText("https://www.youtube.com/live/Q71sLS8h9a4?si=bGNflTmuPwexNC2k")
+        self.url_bar.returnPressed.connect(self.open_url)
+        self.url_bar.setPlaceholderText("https://youtu.be/jNQXAC9IVRw?si=sliH5ck690ZVjVUo")
         self.url_bar.setStyleSheet(self.stylesheet)
 
-        self.model_label = QLabel("Models")
-        self.model_label.setStyleSheet(self.stylesheet)
+        self.effect_label = QLabel("Models")
+        self.effect_label.setStyleSheet(self.stylesheet)
 
-        self.model_dropdown = QComboBox()
-        self.model_dropdown.setStyleSheet(self.stylesheet)
+        self.effect_dropdown = QComboBox()
+        self.effect_dropdown.currentIndexChanged.connect(self.set_effect)
+        self.effect_dropdown.setStyleSheet(self.stylesheet)
 
         self.mini_button = QPushButton("Minimize")
         self.mini_button.clicked.connect(self.minimize)
@@ -593,61 +498,28 @@ class Window(QMainWindow):
         self.exit_button.clicked.connect(self.exit_qt)
         self.exit_button.setStyleSheet(self.stylesheet)
 
-        self.model_dropdown.addItem("Yolov5m")
-        self.model_dropdown.addItem("Yolov8s")
-        self.model_dropdown.addItem("Yolov8m")
-        self.model_dropdown.addItem("Yolov8l")
-        self.model_dropdown.addItem("Yolov11m")
+        self.effect_dropdown.addItem("Yolov8m")
+        self.effect_dropdown.addItem("Yolov8s")
+        self.effect_dropdown.addItem("Yolov8l")
+        self.effect_dropdown.addItem("Yolov7m")
+        self.effect_dropdown.addItem("Yolov5m")
+        self.effect_dropdown.addItem("Yolov11m")
 
         self.menu_bar.addWidget(self.file_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.preset_label, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.preset_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.url_bar, alignment=Qt.AlignTop)
-        self.menu_bar.addWidget(self.model_label, alignment=Qt.AlignTop)
-        self.menu_bar.addWidget(self.model_dropdown, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.effect_label, alignment=Qt.AlignTop)
+        self.menu_bar.addWidget(self.effect_dropdown, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.mini_button, alignment=Qt.AlignTop)
-        self.menu_bar.addWidget(self.device_button, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.fullscreen_button, alignment=Qt.AlignTop)
         self.menu_bar.addWidget(self.exit_button, alignment=Qt.AlignTop)
-        
-        self.preprocess_label = QLabel("Preprocess: ")
-        self.preprocess_label.setStyleSheet(self.stylesheet)
-
-        self.preprocess_dropdown = QComboBox()
-        self.preprocess_dropdown.currentIndexChanged.connect(self.set_preprocess)
-        self.preprocess_dropdown.setStyleSheet(self.stylesheet)
-
-        self.preprocess_dropdown.addItem("None")
-        self.preprocess_dropdown.addItem("Degrade 1")
-        self.preprocess_dropdown.addItem("Degrade 2")
-        self.preprocess_dropdown.addItem("Degrade 3")
-
-        self.preprocesses = {
-            "Degrade 1":    self.degrade_1,
-            "Degrade 2":    self.degrade_2,
-            "Degrade 3":    self.degrade_3
-        }
-
-        self.show_middle_button = QPushButton("Show Intermediate")
-        self.show_middle_button.clicked.connect(self.toggle_show_middle)
-        self.show_middle_button.setStyleSheet(self.stylesheet)
-
-        self.options_label = QLabel("Target: ")
-        self.options_label.setStyleSheet(self.stylesheet)
-
-        self.cmap_left = QLabel("-")
-        self.cmap_left.setStyleSheet(self.stylesheet)
-        self.cmap_right = QLabel("+")
-        self.cmap_right.setStyleSheet(self.stylesheet)
-        self.cmap_key = QLabel("")
-        self.cmap_key.setPixmap(self.cmap_pixmap)
-
-        
-        self.model_dropdown.currentIndexChanged.connect(self.set_model)
 
         self.detach_button = QPushButton("Detach Windows")
         self.detach_button.clicked.connect(self.toggle_detach)
         self.detach_button.setStyleSheet(self.stylesheet)    
+
+        #self.detach_bar.addWidget(self.detach_button, alignment=Qt.AlignLeft)
 
         self.reset_splitter_button = QPushButton("Reset Splitter")
         self.reset_splitter_button.clicked.connect(self.reset_splitter)
@@ -658,16 +530,18 @@ class Window(QMainWindow):
         self.og_label.setAlignment(QtCore.Qt.AlignCenter)
         self.processed_label.setAlignment(QtCore.Qt.AlignCenter)
 
-        basePixmap = QPixmap(480, 640)
-        basePixmap.fill(Qt.black)
+        baseImage = "base_image.jpg"
 
-        self.io_viewer = ImageViewerWidget(basePixmap, basePixmap, self)
+        basePixmap = QPixmap(baseImage)
+
+        # Create the ImageViewerWidget
+        self.io_viewer = ImageViewerWidget(basePixmap, basePixmap)
 
         self.io_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self.clear_button = QPushButton("Clear Graph")
-        self.clear_button.clicked.connect(lambda: (self.close_graph(), self.show_graph()))
-        self.clear_button.setStyleSheet(self.stylesheet)
+
+        #self.io_bar.addWidget(self.og_label)
+        #self.io_bar.addWidget(self.processed_label)
 
         self.pause_button = QPushButton("Pause")
         self.pause_button.clicked.connect(self.toggle_pause)
@@ -705,7 +579,6 @@ class Window(QMainWindow):
         self.fps_ratio_label = QLabel("FPS Out/In: ")
         self.fps_ratio_label.setStyleSheet(self.stylesheet)
 
-        self.video_controls.addWidget(self.clear_button)
         self.video_controls.addWidget(self.live_button)
         self.video_controls.addWidget(self.frame_reset_button)
         self.video_controls.addWidget(self.fps_in_label)
@@ -728,37 +601,56 @@ class Window(QMainWindow):
         self.mid_widget.setLayout(self.io_bar)
         self.graph_widget.setLayout(self.graph_space)
 
-        self.splitter = BetterSplitter(Qt.Vertical)  # Horizontal splitter
+        self.splitter = QSplitter(Qt.Vertical)  # Horizontal splitter
 
         self.splitter.addWidget(self.mid_widget)
         self.splitter.addWidget(self.plot_graph)
 
+        self.splitter.setHandleWidth(10)  # Make the handle thicker
         self.splitter.setStyleSheet("QSplitter::handle { background-color: #CCCCCC; }")  # Set handle color to black
 
         self.main_layout = QVBoxLayout()
         self.main_layout.addLayout(self.menu_bar)
+        #self.main_layout.addLayout(self.options)
+        #self.main_layout.addLayout(self.detach_bar)
+        #self.main_layout.addLayout(self.io_bar)
+        #self.main_layout.addWidget(self.io_viewer)
+        #self.main_layout.addLayout(self.video_controls)
+        #self.main_layout.addLayout(self.graph_space)
         self.main_layout.addWidget(self.splitter)
 
         container = QWidget()
         container.setLayout(self.main_layout)
         self.setCentralWidget(container)
 
-        self.models = {
-            "Yolov5m":   self.apply_yolo,
-            "Yolov8s":   self.apply_yolo,
+        self.effects = {
             "Yolov8m":   self.apply_yolo,
+            "Yolov8s":   self.apply_yolo,
             "Yolov8l":   self.apply_yolo,
-            "Yolov11m":  self.apply_yolo
+            "Yolov7m":   self.apply_yolov7m,
+            "Yolov5m":   self.apply_yolo,
+            "Yolov11m":  self.apply_yolo,
+            "Grayscale": self.apply_grayscale,
         }
 
+        self.presets = {
+            "Live California GMT-8": "https://www.youtube.com/live/PtChZ0D7tkE?si=ylVs8s5BlIH2_aU6",
+            "Live Texas GMT-6": "https://www.youtube.com/live/otX-buqqS6Q?si=ulxJadK_wuVYe1SB",
+            "Live New Orleans GMT-6": "https://www.youtube.com/live/z-kjpAVKvyo?si=Bhz39xU9YOHq54kP",
+            "Live Finland GMT+2": "https://www.youtube.com/live/Cp4RRAEgpeU?si=xXJ9tIJUD17qD9zt",
+            "Live Dublin GMT": "https://www.youtube.com/live/u4UZ4UvZXrg?si=A5FSMhUJjX0gY7Yb",
+            "Live St. Petersburg GMT+3": "https://www.youtube.com/live/h1wly909BYw?si=Boe9gLUcLcp6Za55",
+            "Live Tokyo GMT+9": "https://www.youtube.com/live/DjdUEyjx8GM?si=-umo4EzSyDXDNkqd",
+            "Live Thailand GMT+7": "https://www.youtube.com/live/Q71sLS8h9a4?si=bGNflTmuPwexNC2k",
+            "Prerecorded Nascar": "https://youtu.be/HU7wIi3VriY?si=IVr5EqfsOnMgm9Ya",
+        }
+        
         self.preset_dropdown.currentIndexChanged.connect(self.load_preset)
 
-        self.currentModel = self.model_dropdown.currentText()
+        self.currentEffect = self.effect_dropdown.currentText()
         self.currentFileName = ""
         self.currentFileExt = ""
         self.load_preset()
-        self.set_model()
-        self.preprocess_dropdown.setCurrentText("Degrade 1")
 
     def update_plot(self):
         self.timeList = self.timeList[1:]
@@ -767,68 +659,26 @@ class Window(QMainWindow):
         self.popList.append(self.pop)
         self.line.setData(self.timeList, self.popList)
 
-        if max(self.popList) >= (0.75 * self.max_pop):
-            self.max_pop = max(self.popList) + 5
-            self.plot_graph.setYRange(0, self.max_pop)
-
     def show_graph(self):
         self.plot_graph.show()
-        if not self.paused:
-            self.timerD.start()
+        self.timerD.start()
 
     def close_graph(self):
         self.plot_graph.hide()
         self.timerD.stop()
         self.timeList = [0] * 10
         self.popList = [0] * 10
-        self.max_pop = 20
-        self.plot_graph.setYRange(0, self.max_pop)
 
     def video_manage(self):
         ret, frame = self.cap.read()
         if ret:
-            self.currentFrame = frame.copy()
-
-            if not self.currentPreprocess == "None":
-                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
-            if self.showMiddle and not self.currentPreprocess == "None":
-                self.new_display(self.currentPreproccessedFrame, "left")
-            else:
-                self.new_display(frame, "left")
+            self.currentFrame = frame
+            self.new_display(frame, "left")
             if self.is_detached_left:
                 self.detach_left.display(frame)
             if self.frameGrab:
-
-                visible_scene_rect = self.io_viewer.view1.mapToScene(self.io_viewer.view1.viewport().rect()).boundingRect()
-
-                pixmap_scene_rect = self.io_viewer.pixmapItem.sceneBoundingRect()
-                visible_rect = visible_scene_rect.intersected(pixmap_scene_rect)
-
-                mapped_top_left = self.io_viewer.pixmapItem.mapFromScene(visible_rect.topLeft())
-                mapped_bottom_right = self.io_viewer.pixmapItem.mapFromScene(visible_rect.bottomRight())
-
-                x = int(mapped_top_left.x())
-                y = int(mapped_top_left.y())
-                width = int(mapped_bottom_right.x() - mapped_top_left.x())
-                height = int(mapped_bottom_right.y() - mapped_top_left.y())
-
-                pixmap_rect = self.io_viewer.pixmapItem.boundingRect()
-                scaling_factor_x = self.currentFrame.shape[1] / pixmap_rect.width()
-                scaling_factor_y = self.currentFrame.shape[0] / pixmap_rect.height()
-
-                x = int(x * scaling_factor_x)
-                y = int(y * scaling_factor_y)
-                width = int(width * scaling_factor_x)
-                height = int(height * scaling_factor_y)
-
-                if self.currentPreprocess == "None":
-                    fake_frame = self.currentFrame[y:y + height, x:x + width]
-                else:
-                    fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
-
                 self.frameGrab = False
-
-                new_worker = Worker(self, fake_frame, frame[y:y + height, x:x + width])
+                new_worker = Worker(self, self.currentFrame)
                 new_worker.finished.connect(self.on_worker_finished)
                 self.workers.append(new_worker)
                 new_worker.start()
@@ -900,7 +750,7 @@ class Window(QMainWindow):
                     self.timer.start(self.delay)
                     self.fps_timer.start(1000)
 
-                    if "Yolo" in self.currentModel:
+                    if "Yolo" in self.currentEffect:
                         self.close_graph()
                         self.show_graph()
                         #self.display(self.currentFrame, self.processed_label)
@@ -910,18 +760,52 @@ class Window(QMainWindow):
         if self.preset_dropdown.currentText() != "":
             self.preset_url = self.presets[self.preset_dropdown.currentText()]
             self.url_bar.setText(self.preset_url)
-            self.open_url(self.preset_url, False)
-    
-    def open_url(self, link, close_preset):
-        if link != "":
             temp_live = True
-            if "youtube.com" in link or "youtu.be/" in link:
+
+            ydl_opts = {
+                'format': 'best[ext=mp4]',
+                'quiet': True,
+            }
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url_bar.text(), download=False)
+                if info.get('is_live', False):
+                    temp_live = True
+                else:
+                    temp_live = False
+                self.video_url = info['url']
+                self.cap = cv2.VideoCapture(self.video_url)
+                video_title = info.get('title', 'Unknown Title')
+                illegals = r'[<>:"/\\|?*\0]'
+                temp = re.sub(illegals, '-', video_title)
+                self.currentFileName = temp.strip().strip('.')
+
+            if self.cap.isOpened:
+                self.kill_workers()
+                self.liveVideo = temp_live
+                self.firstFPS = int((self.cap.get(cv2.CAP_PROP_FPS)))
+                self.fps_in.setValue(self.firstFPS)
+                self.current_media = "vid"
+                self.paused = False
+                self.pause_button.setText("Pause")
+                self.timer.start(self.delay)
+                self.fps_timer.start(1000)
+
+                if "Yolo" in self.currentEffect:
+                    self.close_graph()
+                    self.show_graph()
+                    #self.display(self.currentFrame, self.processed_label)
+                    self.new_display(self.currentFrame, "right")
+    
+    def open_url(self):
+        if self.url_bar.text() != "":
+            temp_live = True
+            if "youtube.com" in self.url_bar.text() or "youtu.be/" in self.url_bar.text():
                 ydl_opts = {
                     'format': 'best[ext=mp4]',
                     'quiet': True,
                 }
                 with YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(link, download=False)
+                    info = ydl.extract_info(self.url_bar.text(), download=False)
                     if info.get('is_live', False):
                         temp_live = True
                     else:
@@ -934,7 +818,7 @@ class Window(QMainWindow):
                     self.currentFileName = temp.strip().strip('.')
             else:
                 self.currentFileName = "urlvideo"
-                self.cap = cv2.VideoCapture(link)
+                self.cap = cv2.VideoCapture(self.url_bar.text())
             if self.cap.isOpened:
                 self.kill_workers()
                 self.liveVideo = temp_live
@@ -943,14 +827,14 @@ class Window(QMainWindow):
                 self.current_media = "vid"
                 self.paused = False
                 self.pause_button.setText("Pause")
-                if close_preset:
-                    self.preset_dropdown.setCurrentText("")
+                self.preset_dropdown.setCurrentText("")
                 self.timer.start(self.delay)
                 self.fps_timer.start(1000)
 
-                if "Yolo" in self.currentModel:
+                if "Yolo" in self.currentEffect:
                     self.close_graph()
                     self.show_graph()
+                    #self.display(self.currentFrame, self.processed_label)
                     self.new_display(self.currentFrame, "right")
 
     def set_file_menu(self):
@@ -999,7 +883,7 @@ class Window(QMainWindow):
                     self.timer.start(self.delay)
                     self.fps_timer.start(1000)
 
-                    if "Yolo" in self.currentModel:
+                    if "Yolo" in self.currentEffect:
                         self.close_graph()
                         self.show_graph()
                         #self.display(self.currentFrame, self.processed_label)
@@ -1017,22 +901,6 @@ class Window(QMainWindow):
             if save_path:
                 cv2.imwrite(save_path, self.currentOutFrame)
         
-    def swap_devices(self):
-        if self.device == 0:
-            yolov8s.to('cpu')
-            yolov8m.to('cpu')
-            yolov8l.to('cpu')
-            yolov5m.to('cpu')
-            yolov11m.to('cpu')
-            self.device = 1
-        else:
-            yolov8s.to('cuda')
-            yolov8m.to('cuda')
-            yolov8l.to('cuda')
-            yolov5m.to('cuda')
-            yolov11m.to('cuda')
-            self.device = 0
-
     def minimize(self):
         self.setWindowState(Qt.WindowMinimized)
         self.fullscreen = False
@@ -1056,54 +924,14 @@ class Window(QMainWindow):
 
     def convert_image(self):
         if self.currentFrame is not None:
-            visible_scene_rect = self.io_viewer.view1.mapToScene(self.io_viewer.view1.viewport().rect()).boundingRect()
-
-            pixmap_scene_rect = self.io_viewer.pixmapItem.sceneBoundingRect()
-            visible_rect = visible_scene_rect.intersected(pixmap_scene_rect)
-
-            mapped_top_left = self.io_viewer.pixmapItem.mapFromScene(visible_rect.topLeft())
-            mapped_bottom_right = self.io_viewer.pixmapItem.mapFromScene(visible_rect.bottomRight())
-
-            x = int(mapped_top_left.x())
-            y = int(mapped_top_left.y())
-            width = int(mapped_bottom_right.x() - mapped_top_left.x())
-            height = int(mapped_bottom_right.y() - mapped_top_left.y())
-
-            pixmap_rect = self.io_viewer.pixmapItem.boundingRect()
-            scaling_factor_x = self.currentFrame.shape[1] / pixmap_rect.width()
-            scaling_factor_y = self.currentFrame.shape[0] / pixmap_rect.height()
-
-            x = int(x * scaling_factor_x)
-            y = int(y * scaling_factor_y)
-            width = int(width * scaling_factor_x)
-            height = int(height * scaling_factor_y)
-            
-            if self.currentPreprocess == "None":
-                fake_frame = self.currentFrame[y:y + height, x:x + width]
-            else:
-                fake_frame = self.currentPreproccessedFrame[y:y + height, x:x + width]
-
-
-            #self.fps_out_label.setText("Output FPS: 0")
-            frame = fake_frame.copy()
-            if not self.currentPreprocess == "None":
-                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
-                self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, frame)
-            else:
-                self.currentOutFrame = self.models[self.currentModel](frame, frame)
-
-            if self.showMiddle and not self.currentPreprocess == "None":
-                self.new_display(self.currentPreproccessedFrame, "left")
-                if self.is_detached_left:
-                    self.detach_left.display(self.currentPreproccessedFrame)
-                
-            else:
-                self.new_display(self.currentFrame, "left")
-                if self.is_detached_left:
-                    self.detach_left.display(self.currentFrame)
-                    
-        
+            self.fps_out_label.setText("Output FPS: 0")
+            self.currentOutFrame = self.effects[self.currentEffect](self.currentFrame)
+            #self.display(self.currentFrame, self.og_label)
+            #self.display(self.currentOutFrame, self.processed_label)
+            self.new_display(self.currentFrame, "left")
             self.new_display(self.currentOutFrame, "right")
+            if self.is_detached_left:
+                self.detach_left.display(self.currentFrame)
             if self.is_detached_right:
                 self.detach_right.display(self.currentOutFrame)
     
@@ -1168,23 +996,38 @@ class Window(QMainWindow):
         except AttributeError:
             pass
     
-    def set_model(self):
+    def set_effect(self):
         if not self.firstCycle:
-            self.pastModel = self.currentModel
-        self.currentModel = self.model_dropdown.currentText()
+            self.pastEffect = self.currentEffect
+        self.currentEffect = self.effect_dropdown.currentText()
 
-        #print("self.pastModel " + self.pastModel)
-        #print("self.currentModel " + self.currentModel)
+        print("past: " + self.pastEffect)
+        print("current: " + self.currentEffect)
 
-        if ("Yolo" in self.currentModel):
-            if ("Yolo" in self.pastModel):
-                self.plot_graph.setTitle(f"{self.currentModel} Number of targets found", color="b", size="20pt")
+        if ("Yolo" in self.currentEffect):
+            if ("Yolo" in self.pastEffect):
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of targets found", color="b", size="20pt")
+                '''
+                if self.targetString == "person":
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of people found", color="b", size="20pt")
+                elif self.targetString == "bus":
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of buses found", color="b", size="20pt")
+                else:
+                    self.plot_graph.setTitle(f"{self.currentEffect} Number of {self.targetString}s found", color="b", size="20pt")'''
             else:
                 self.clear_option_layout()
-                
-                self.options.addWidget(self.preprocess_label)
-                self.options.addWidget(self.preprocess_dropdown)
-                self.options.addWidget(self.show_middle_button)
+                self.options_label = QLabel("Target: ")
+                self.options_label.setStyleSheet(self.stylesheet)
+
+
+                self.cmap_left = QLabel("-")
+                self.cmap_left.setStyleSheet(self.stylesheet)
+                self.cmap_right = QLabel("+")
+                self.cmap_right.setStyleSheet(self.stylesheet)
+                self.cmap_key = QLabel("")
+
+                self.cmap_key.setPixmap(self.cmap_pixmap)
+
                 self.options.addWidget(self.options_label)
                 self.options.addWidget(self.targetsCheckBox)
                 self.options.addWidget(self.targetsButton)
@@ -1192,12 +1035,14 @@ class Window(QMainWindow):
                 self.options.addWidget(self.cmap_left)
                 self.options.addWidget(self.cmap_key)
                 self.options.addWidget(self.cmap_right)
-                if self.current_media == "vid":
-                    self.close_graph()
-                    self.show_graph()
 
         else:
             self.clear_option_layout()
+
+        if "Yolo" in self.currentEffect and self.current_media == "vid":
+            self.show_graph()
+        else:
+            self.close_graph()
 
         if self.current_media == "img":
             self.convert_image()
@@ -1206,23 +1051,29 @@ class Window(QMainWindow):
 
         self.firstCycle = False
     
-    def set_preprocess(self):
-        self.currentPreprocess = self.preprocess_dropdown.currentText()
-        if self.current_media == "img":
-            self.convert_image()
-        if self.current_media == "vid" and self.paused:
-            self.convert_image()
-
     def set_target(self):
+        
         self.currentTargetsString = [word.strip() for word in self.targetsCheckBox.lineEdit().text().split(',')]
         self.currentTargetsIndex = []
         if len(self.currentTargetsString) != 0:
             for name in self.currentTargetsString:
                 self.currentTargetsIndex.append(self.targetKeys[self.targetNames.index(name)])
-        if self.current_media == "img":
-            self.convert_image()
-        if self.current_media == "vid" and self.paused:
-            self.convert_image()
+
+        '''
+        if self.targetString != self.options_dropdown.currentText():
+            self.targetString = self.options_dropdown.currentText()
+            self.target = self.targetKeys[self.targetNames.index(self.targetString)]
+            if self.targetString == "person":
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of people found", color="b", size="20pt")
+            elif self.targetString == "bus":
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of buses found", color="b", size="20pt")
+            else:
+                self.plot_graph.setTitle(f"{self.currentEffect} Number of {self.targetString}s found", color="b", size="20pt")
+            if self.current_media != "vid":
+                self.convert_image()
+            else:
+                self.close_graph()
+                self.show_graph()'''
         
     def set_target_and_clear(self):
         self.set_target()
@@ -1236,25 +1087,12 @@ class Window(QMainWindow):
                 self.timerD.start()
                 self.paused = False
                 self.pause_button.setText("Pause")
+
             else:
                 self.timer.stop()
                 self.timerD.stop()
                 self.paused = True
                 self.pause_button.setText("Play")
-    
-    def toggle_show_middle(self):
-        if self.showMiddle:
-            self.showMiddle = False
-            self.show_middle_button.setText("Show Preprocess")
-        else:
-            self.showMiddle = True
-            self.show_middle_button.setText("Show Original")
-
-        if self.current_media == "img":
-            self.convert_image()
-        if self.current_media == "vid" and self.paused:
-            self.convert_image()
-
             
     def b_frame(self):
         if self.current_media == "vid" and self.paused and not self.liveVideo:
@@ -1299,30 +1137,55 @@ class Window(QMainWindow):
             self.cap.release()
             self.cap = cv2.VideoCapture(self.video_url)
     
-    def apply_yolo(self, frameI, frameOut):
-        frameIn = frameI.copy()
-        if frameIn is not None:
-            if "Yolo" in self.currentModel:
-                output = yolov8m(frameIn)
-            if self.currentModel == "Yolov8s":
-                output = yolov8s(frameIn)
-            if self.currentModel == "Yolov8l":
-                output = yolov8l(frameIn)
-            if self.currentModel == "Yolov5m":
-                output = yolov5m(frameIn)
-            if self.currentModel == "Yolov11m":
-                output = yolov11m(frameIn)
+    def apply_yolo(self, frame):
+        if frame is not None:
+            outframe = frame.copy()
+            if "Yolo" in self.currentEffect:
+                output = yolov8m(outframe)
+            if self.currentEffect == "Yolov8s":
+                output = yolov8s(outframe)
+            if self.currentEffect == "Yolov8l":
+                output = yolov8l(outframe)
+            if self.currentEffect == "Yolov5m":
+                output = yolov5m(outframe)
+            if self.currentEffect == "Yolov11m":
+                output = yolov11m(outframe)
 
 
             boxes = output[0].boxes.xyxy.cpu().numpy()
             class_ids = output[0].boxes.cls.cpu().numpy()
             confidences = output[0].boxes.conf.cpu().numpy()
             
-            xpos = int(frameIn.shape[1] * 0.8)
-            ypos = int(frameIn.shape[0] - 40)
-            scale = frameIn.shape[1] * 0.00078125
-            thickness =  1 if frameIn.shape[1] < 720 else 4
-            labelThickness = 1 if frameIn.shape[1] < 720 else 2
+            '''            
+            targetBoxes = []
+            for targets in self.currentTargetsIndex:
+                targetBoxes.extend(boxes[class_ids == targets])
+
+            self.pop = len(targetBoxes)
+
+            if self.pop > int(0.8 * self.max_pop):
+                self.max_pop = self.max_pop * 1.25
+                self.plot_graph.setYRange(0, self.max_pop)
+            
+            
+
+            xpos = int(outframe.shape[1] * 0.8)
+            ypos = int(outframe.shape[0] - 40)
+            scale = outframe.shape[1] * 0.00078125
+            thickness =  1 if outframe.shape[1] < 720 else 4
+
+            for i, box in enumerate(targetBoxes):
+                x1, y1, x2, y2 = map(int, box)
+                confidence = confidences[i]
+                rgba_color = plt.get_cmap('rainbow')(confidence)
+                color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
+                cv2.rectangle(outframe, (x1, y1), (x2, y2), color, thickness)
+            '''
+            xpos = int(outframe.shape[1] * 0.8)
+            ypos = int(outframe.shape[0] - 40)
+            scale = outframe.shape[1] * 0.00078125
+            thickness =  1 if outframe.shape[1] < 720 else 4
+            labelThickness = 1 if outframe.shape[1] < 720 else 2
 
             pop = 0
 
@@ -1334,38 +1197,72 @@ class Window(QMainWindow):
                     confidence = confidences[i]
                     rgba_color = plt.get_cmap('rainbow')(confidence)
                     color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
-                    cv2.rectangle(frameOut, (x1, y1), (x2, y2), color, thickness)
-                    cv2.putText(frameOut, f"{self.targetNames[int(class_ids[i])]} {confidence:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 
+                    cv2.rectangle(outframe, (x1, y1), (x2, y2), color, thickness)
+                    cv2.putText(outframe, f"{self.targetNames[int(class_ids[i])]} {confidence:.2f}", (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 
                         scale * 0.5, color, labelThickness) 
 
             self.pop = pop
-            cv2.putText(frameOut, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+
+            cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
                         scale, (0, 0, 0), thickness + 2)    
-            cv2.putText(frameOut, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+            cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
                                 scale, (255, 255, 255), thickness)
-            return frameOut
+            return outframe
+    
+    def apply_yolov7m(self, frame):
+        img = outframe = frame.copy()
+        img = pad_to_multiple(img, 32)
+        img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3xHxW
+        img = torch.from_numpy(img.copy()).to(device)  # Convert to tensor
+        img = img.float() / 255.0  # Normalize to [0,1]
+        if img.ndimension() == 3:
+            img = img.unsqueeze(0)  # Add batch dimension
+
+        # Inference
+        with torch.no_grad():
+            pred = model(img, augment=False)[0]
+        pred = non_max_suppression(pred, 0.25, 0.45, agnostic=True)  # Apply NMS
+
+        # Draw results
+        pop = 0
+        xpos = int(outframe.shape[1] * 0.8)
+        ypos = int(outframe.shape[0] - 40)
+
+        scale = outframe.shape[1] * 0.00078125
+        thickness =  1 if outframe.shape[1] < 720 else 4
+        labelThickness = 1 if outframe.shape[1] < 720 else 2
+
+
+        for det in pred:  # Process detections
+
+            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], outframe.shape).round()
+            
+            # Draw bounding boxes and labels on original image
+            for *xyxy, conf, cls in det:
+                if int(cls) in self.currentTargetsIndex:
+                    pop += 1
+                    x1, y1, x2, y2 = xyxy
+                    x1, y1, x2, y2, confidence = x1.item(), y1.item(), x2.item(), y2.item(), conf.item()
+                    
+                    rgba_color = plt.get_cmap('rainbow')(confidence)
+                    color = (int(rgba_color[2] * 255), int(rgba_color[1] * 255), int(rgba_color[0] * 255))
+                    cv2.rectangle(outframe, (int(x1), int(y1)), (int(x2), int(y2)), color, thickness)
+
+                    cv2.putText(outframe, f"{self.targetNames[int(cls)]} {confidence:.2f}", (int(x1), int(y1) - 5), cv2.FONT_HERSHEY_SIMPLEX, 
+                    scale * 0.5, color, labelThickness) 
+                    
+
+        self.pop = pop
+
+        cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (0, 0, 0), thickness + 2)    
+        cv2.putText(outframe, f"Found: {self.pop}", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, 
+                                scale, (255, 255, 255), thickness)
+        return outframe
+    
 
     def apply_grayscale(self):
         return cv2.cvtColor(self.currentFrame, cv2.COLOR_BGR2GRAY)
-
-    def degrade_1(self, inFrame):
-        frame = inFrame.copy()
-        frame = (frame +1)/8 - 1
-        frame = np.clip(frame, 0, 255).astype(np.uint8)
-        return frame
-    
-    def degrade_2(self, inFrame):
-        frame = inFrame.copy()
-        frame = (frame +1)/8 + 126
-        frame = np.clip(frame, 0, 255).astype(np.uint8)
-        return frame
-    
-    def degrade_3(self, inFrame):
-        frame = inFrame.copy()
-        frame = (frame +1)/8 + 223
-        frame = np.clip(frame, 0, 255).astype(np.uint8)
-        return frame
-    
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
