@@ -1112,6 +1112,9 @@ class Window(QMainWindow):
 
     def convert_image(self):
         if self.currentFrame is not None:
+            if not self.currentPreprocess == "None":
+                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](self.currentFrame)
+
             visible_scene_rect = self.io_viewer.view1.mapToScene(self.io_viewer.view1.viewport().rect()).boundingRect()
 
             pixmap_scene_rect = self.io_viewer.pixmapItem.sceneBoundingRect()
@@ -1134,25 +1137,31 @@ class Window(QMainWindow):
             width = int(width * scaling_factor_x)
             height = int(height * scaling_factor_y)
 
-            fake_frame = self.currentFrame[y:y + height, x:x + width]
+            cropped_frame = None
+            dirty_crop = None
+            #frame = None
+            #frame2 = None
 
-            frame = fake_frame.copy()
+            cropped_frame = self.currentFrame[y:y + height, x:x + width]
+
             if not self.currentPreprocess == "None":
-                self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
-                self.currentOutFrame = self.models[self.currentModel](self.currentPreproccessedFrame, frame)
+                dirty_crop = self.currentPreproccessedFrame[y:y + height, x:x + width]
+
+            frame = cropped_frame.copy()
+            #frame2 = frame.copy()
+            if not self.currentPreprocess == "None":
+                self.currentOutFrame = self.models[self.currentModel](dirty_crop, frame)
             else:
-                self.currentOutFrame = self.models[self.currentModel](fake_frame, fake_frame)
+                self.currentOutFrame = self.models[self.currentModel](cropped_frame, frame)
 
             if self.showMiddle and not self.currentPreprocess == "None":
                 self.new_display(self.currentPreproccessedFrame, "left")
                 if self.is_detached_left:
                     self.detach_left.display(self.currentPreproccessedFrame)
-                
             else:
-                self.new_display(fake_frame, "left")
+                self.new_display(self.currentFrame, "left")
                 if self.is_detached_left:
-                    self.detach_left.display(fake_frame)
-                    
+                    self.detach_left.display(self.currentFrame)
         
             self.new_display(self.currentOutFrame, "right")
             if self.is_detached_right:
