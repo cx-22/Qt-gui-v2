@@ -34,43 +34,10 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QEvent, QSettings
 import torch
 
 sys.path.append(os.path.join(os.path.dirname(__file__), 'yolov7'))
-#import yolov7
 from yolov7.utils.general import check_img_size, non_max_suppression, scale_coords
 from yolov7.models.experimental import attempt_load
 
 logging.getLogger('ultralytics').setLevel(logging.WARNING)
-
-yolov8s = YOLO('yolov8s.pt')
-yolov8m = YOLO('yolov8m.pt')
-yolov8l = YOLO('yolov8l.pt')
-yolov5m = YOLO('yolov5m.pt')
-yolov11m = YOLO('yolo11m.pt')
-
-hasGPU = False
-
-if torch.cuda.is_available():
-    #print("CUDA is available. GPU will be used.")
-    print("GPU Name:", torch.cuda.get_device_name(0))
-    yolov8s.to('cuda')
-    yolov8m.to('cuda')
-    yolov8l.to('cuda')
-    yolov5m.to('cuda')
-    yolov11m.to('cuda')
-    hasGPU = True
-else:
-    print("CUDA is not available. Using CPU.")
-
-
-if hasGPU:
-    device = torch.device('cuda')  # Set device to GPU
-    model = attempt_load('yolov7.pt', map_location=device)  # Load model to GPU
-else:
-    device = torch.device('cpu')  # Set device to CPU
-    model = attempt_load('yolov7.pt', map_location=device)  # Load model to CPU
-
-imgsz = 640  # Inference size (square)
-stride = int(model.stride.max())  # Model stride
-imgsz = check_img_size(imgsz, s=stride)  # Ensure imgsz is a multiple of stride
 
 def pad_to_multiple(image, multiple=32):
     h, w = image.shape[:2]
@@ -83,12 +50,10 @@ def pad_to_multiple(image, multiple=32):
     pad_left = (new_w - w) // 2
     pad_right = new_w - w - pad_left
     
-    # Apply padding
     return cv2.copyMakeBorder(
         image, pad_top, pad_bottom, pad_left, pad_right, 
         borderType=cv2.BORDER_CONSTANT, value=(0, 0, 0)
     )
-
 
 class Worker(QThread):
     def __init__(self, win, frame1, frame2, process):
@@ -273,18 +238,38 @@ class BetterSplitterHandle(QSplitterHandle):
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
-class InputView(QGraphicsView):
+class ZoomView(QGraphicsView):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setAcceptDrops(True)
+
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+
+        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
     def wheelEvent(self, event):
-        pass
+        zoom_in_factor = 1.25
+        zoom_out_factor = 0.8
+
+        if event.angleDelta().y() > 0:
+            self.scale(zoom_in_factor, zoom_in_factor)
+        else:
+            self.scale(zoom_out_factor, zoom_out_factor)
+
+    def dragEnterEvent(self, event):
+            self.parent().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+            self.parent().dropEvent(event)
 
 class ImageViewerWidget(QWidget):
     def __init__(self, pixmap1, pixmap2, window, parent=None):
         super().__init__(parent)
 
         self.win = window
+        self.setAcceptDrops(True)
 
         main_layout = QVBoxLayout(self)
         self.setLayout(main_layout)
@@ -292,21 +277,14 @@ class ImageViewerWidget(QWidget):
         self.splitter = BetterSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
 
-        self.view1 = InputView()
-        self.view1 = QGraphicsView()
+        self.view1 = ZoomView()
         self.scene1 = QGraphicsScene()
-
-        self.view1.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.view1.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-
-        self.view1.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self.view1.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
         self.view1.setScene(self.scene1)
         self.view1.setAlignment(Qt.AlignCenter)
         self.splitter.addWidget(self.view1)
 
-        self.view2 = QGraphicsView()
+        self.view2 = ZoomView()
         self.scene2 = QGraphicsScene()
         self.view2.setScene(self.scene2)
         self.view2.setAlignment(Qt.AlignCenter)
@@ -343,18 +321,7 @@ class ImageViewerWidget(QWidget):
 
         view.resizeEvent = lambda event: resize_event()
         resize_event()
-    
-    def wheelEvent(self, event):
-        zoom_in_factor = 1.25
-        zoom_out_factor = 0.8
-
-        if event.angleDelta().y() > 0:
-            self.view1.scale(zoom_in_factor, zoom_in_factor)
-        else:
-            self.view1.scale(zoom_out_factor, zoom_out_factor)
         
-        #if self.win.current_media != "vid":
-        #    self.win.convert_image()
 
     def load_left_image(self, pixmap):
         self.add_image_to_scene(self.view1, self.scene1, pixmap, True)
@@ -367,9 +334,49 @@ class ImageViewerWidget(QWidget):
         splitter_position = total_height // 2
         self.splitter.setSizes([splitter_position, splitter_position])
 
+    def dragEnterEvent(self, event):
+            self.win.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+            self.win.dropEvent(event)
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        self.yolov8s = YOLO('yolov8s.pt')
+        self.yolov8m = YOLO('yolov8m.pt')
+        self.yolov8l = YOLO('yolov8l.pt')
+        self.yolov5m = YOLO('yolov5m.pt')
+        self.yolov11m = YOLO('yolo11m.pt')
+
+        self.device = None
+
+        hasGPU = False
+
+        if torch.cuda.is_available():
+            print("GPU Name:", torch.cuda.get_device_name(0))
+            self.yolov8s.to('cuda')
+            self.yolov8m.to('cuda')
+            self.yolov8l.to('cuda')
+            self.yolov5m.to('cuda')
+            self.yolov11m.to('cuda')
+            hasGPU = True
+        else:
+            print("CUDA is not available. Using CPU.")
+
+        self.yolov7 = None
+        if hasGPU:
+            self.device = torch.device('cuda')
+            self.yolov7 = attempt_load('yolov7.pt', map_location=self.device)
+        else:
+            self.device = torch.device('cpu')
+            self.yolov7 = attempt_load('yolov7.pt', map_location=self.device)
+
+        imgsz = 640
+        stride = int(self.yolov7.stride.max())
+        imgsz = check_img_size(imgsz, s=stride)
+
         self.showFullScreen()
         self.setAcceptDrops(True)
 
@@ -377,7 +384,6 @@ class Window(QMainWindow):
         self.screen_width = screen.size().width()
         self.screen_height = screen.size().height()
 
-        self.um = True
         self.firstWidth = 0
         self.firstHeight = 0
 
@@ -431,8 +437,8 @@ class Window(QMainWindow):
         self.fps_timer = QTimer()
         self.fps_timer.timeout.connect(self.find_fps)
 
-        self.targetKeys = list(yolov8m.names.keys())
-        self.targetNames = list(yolov8m.names.values())
+        self.targetKeys = list(self.yolov8m.names.keys())
+        self.targetNames = list(self.yolov8m.names.values())
         self.target = 0
         self.targetList = ['person', 'car', 'bus', 'truck', 'bicycle', 'motorcycle']
         self.currentTargetsString = ['']
@@ -752,7 +758,7 @@ class Window(QMainWindow):
 
         self.video_controls.setAlignment(Qt.AlignCenter)
 
-        self.graph_space.addWidget(self.plot_graph)#, alignment=Qt.AlignBottom)
+        self.graph_space.addWidget(self.plot_graph)
 
         self.io_bar.addLayout(self.options)
         self.io_bar.addLayout(self.detach_bar)
@@ -762,12 +768,12 @@ class Window(QMainWindow):
         self.mid_widget.setLayout(self.io_bar)
         self.graph_widget.setLayout(self.graph_space)
 
-        self.splitter = BetterSplitter(Qt.Vertical)  # Horizontal splitter
+        self.splitter = BetterSplitter(Qt.Vertical)
 
         self.splitter.addWidget(self.mid_widget)
         self.splitter.addWidget(self.plot_graph)
 
-        self.splitter.setStyleSheet("QSplitter::handle { background-color: #CCCCCC; }")  # Set handle color to black
+        self.splitter.setStyleSheet("QSplitter::handle { background-color: #CCCCCC; }")
 
         self.main_layout = QVBoxLayout()
         self.main_layout.addLayout(self.menu_bar)
@@ -944,7 +950,6 @@ class Window(QMainWindow):
                     if "Yolo" in self.currentModel:
                         self.close_graph()
                         self.show_graph()
-                        #self.display(self.currentFrame, self.processed_label)
                         self.new_display(self.currentFrame, "right")
     
     def load_preset(self):
@@ -1043,7 +1048,6 @@ class Window(QMainWindow):
                     if "Yolo" in self.currentModel:
                         self.close_graph()
                         self.show_graph()
-                        #self.display(self.currentFrame, self.processed_label)
                         self.new_display(self.currentFrame, "right")
 
     def save_file(self):
@@ -1061,19 +1065,23 @@ class Window(QMainWindow):
     def swap_devices(self):
         self.kill_workers()
         if self.device == 0:
-            yolov8s.to('cpu')
-            yolov8m.to('cpu')
-            yolov8l.to('cpu')
-            yolov5m.to('cpu')
-            yolov11m.to('cpu')
+            self.yolov8s.to('cpu')
+            self.yolov8m.to('cpu')
+            self.yolov8l.to('cpu')
+            self.yolov5m.to('cpu')
+            self.yolov11m.to('cpu')
+            device = torch.device('cpu')
+            self.yolov7 = attempt_load('yolov7.pt', map_location=device)
             self.device = 1
             self.device_button.setText("Swap to GPU")
         else:
-            yolov8s.to('cuda')
-            yolov8m.to('cuda')
-            yolov8l.to('cuda')
-            yolov5m.to('cuda')
-            yolov11m.to('cuda')
+            self.yolov8s.to('cuda')
+            self.yolov8m.to('cuda')
+            self.yolov8l.to('cuda')
+            self.yolov5m.to('cuda')
+            self.yolov11m.to('cuda')
+            device = torch.device('cuda')
+            self.yolov7 = attempt_load('yolov7.pt', map_location=device)
             self.device = 0
             self.device_button.setText("Swap to CPU")
         if self.current_media == "img":
@@ -1216,9 +1224,6 @@ class Window(QMainWindow):
             self.pastModel = self.currentModel
         self.currentModel = self.model_dropdown.currentText()
 
-        #print("self.pastModel " + self.pastModel)
-        #print("self.currentModel " + self.currentModel)
-
         if ("Yolo" in self.currentModel):
             if ("Yolo" in self.pastModel):
                 self.plot_graph.setTitle(f"{self.currentModel} Number of targets found", color="b", size="20pt")
@@ -1346,15 +1351,15 @@ class Window(QMainWindow):
         frameIn = frameI.copy()
         if frameIn is not None:
             if "Yolo" in self.currentModel:
-                output = yolov8m(frameIn)
+                output = self.yolov8m(frameIn)
             if self.currentModel == "Yolov8s":
-                output = yolov8s(frameIn)
+                output = self.yolov8s(frameIn)
             if self.currentModel == "Yolov8l":
-                output = yolov8l(frameIn)
+                output = self.yolov8l(frameIn)
             if self.currentModel == "Yolov5m":
-                output = yolov5m(frameIn)
+                output = self.yolov5m(frameIn)
             if self.currentModel == "Yolov11m":
-                output = yolov11m(frameIn)
+                output = self.yolov11m(frameIn)
 
 
             boxes = output[0].boxes.xyxy.cpu().numpy()
@@ -1392,15 +1397,15 @@ class Window(QMainWindow):
         frameIn = frameI.copy()
         frameOut = frameO.copy()
         frameIn = pad_to_multiple(frameIn, 32)
-        frameIn = frameIn[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3xHxW
-        frameIn = torch.from_numpy(frameIn.copy()).to(device)  # Convert to tensor
-        frameIn = frameIn.float() / 255.0  # Normalize to [0,1]
+        frameIn = frameIn[:, :, ::-1].transpose(2, 0, 1)
+        frameIn = torch.from_numpy(frameIn.copy()).to(self.device)
+        frameIn = frameIn.float() / 255.0
         if frameIn.ndimension() == 3:
-            frameIn = frameIn.unsqueeze(0)  # Add batch dimension
+            frameIn = frameIn.unsqueeze(0)
 
         with torch.no_grad():
-            pred = model(frameIn, augment=False)[0]
-        pred = non_max_suppression(pred, 0.25, 0.45, agnostic=True)  # Apply NMS
+            pred = self.yolov7(frameIn, augment=False)[0]
+        pred = non_max_suppression(pred, 0.25, 0.45, agnostic=True)
 
         pop = 0
         xpos = int(frameOut.shape[1] * 0.8)
