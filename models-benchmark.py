@@ -26,9 +26,10 @@ from PyQt5.QtWidgets import (
     QGraphicsPixmapItem,
     QSplitter,
     QSplitterHandle,
-    QSizePolicy
+    QSizePolicy,
+    QSlider
 )
-from PyQt5.QtGui import QPixmap, QImage, QStandardItem
+from PyQt5.QtGui import QPixmap, QImage, QStandardItem, QDragEnterEvent, QDropEvent
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal, QEvent, QSettings
 
 import torch
@@ -271,17 +272,46 @@ class BetterSplitterHandle(QSplitterHandle):
         layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(layout)
 
-class InputView(QGraphicsView):
+class EGraphicsView(QGraphicsView):
+    fileDroppedGraphics = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        filePath = event.mimeData().urls()[0].toLocalFile()
+        self.fileDroppedGraphics.emit(filePath)
+
+class Scene(QGraphicsScene):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-    def wheelEvent(self, event):
-        pass
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        event.accept()
+
+    def dragMoveEvent(self, e):
+        e.acceptProposedAction()
+
 
 class ImageViewerWidget(QWidget):
+    fileDropped = pyqtSignal(str)
+
     def __init__(self, pixmap1, pixmap2, window, parent=None):
         super().__init__(parent)
-
+        self.setAcceptDrops(True)
         self.win = window
 
         main_layout = QVBoxLayout(self)
@@ -290,9 +320,10 @@ class ImageViewerWidget(QWidget):
         self.splitter = BetterSplitter(Qt.Horizontal)
         main_layout.addWidget(self.splitter)
 
-        self.view1 = InputView()
-        self.view1 = QGraphicsView()
-        self.scene1 = QGraphicsScene()
+        self.view1 = EGraphicsView()
+        self.scene1 = Scene()
+
+        self.view1.fileDroppedGraphics.connect(self.dropGraphics)
 
         self.view1.setDragMode(QGraphicsView.ScrollHandDrag)
         self.view1.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
@@ -304,8 +335,8 @@ class ImageViewerWidget(QWidget):
         self.view1.setAlignment(Qt.AlignCenter)
         self.splitter.addWidget(self.view1)
 
-        self.view2 = QGraphicsView()
-        self.scene2 = QGraphicsScene()
+        self.view2 = EGraphicsView()
+        self.scene2 = Scene()
         self.view2.setScene(self.scene2)
         self.view2.setAlignment(Qt.AlignCenter)
         self.splitter.addWidget(self.view2)
@@ -351,8 +382,6 @@ class ImageViewerWidget(QWidget):
         else:
             self.view1.scale(zoom_out_factor, zoom_out_factor)
         
-        #if self.win.current_media != "vid":
-        #    self.win.convert_image()
 
     def load_left_image(self, pixmap):
         self.add_image_to_scene(self.view1, self.scene1, pixmap, True)
@@ -364,6 +393,19 @@ class ImageViewerWidget(QWidget):
         total_height = self.splitter.height()
         splitter_position = total_height // 2
         self.splitter.setSizes([splitter_position, splitter_position])
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        filePath = event.mimeData().urls()[0].toLocalFile()
+        self.fileDropped.emit(filePath)
+    
+    def dropGraphics(self, filePath):
+        self.fileDropped.emit(filePath)
 
 class Window(QMainWindow):
     def __init__(self):
@@ -421,6 +463,10 @@ class Window(QMainWindow):
         self.options = None
         self.video_url = None
         self.liveVideo = False
+
+        self.num_frames = 0
+        self.duration = 0
+        self.frame_position = 0
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.video_manage)
@@ -694,6 +740,7 @@ class Window(QMainWindow):
         basePixmap.fill(Qt.black)
 
         self.io_viewer = ImageViewerWidget(basePixmap, basePixmap, self)
+        self.io_viewer.fileDropped.connect(self.open_file)
 
         self.io_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -737,6 +784,41 @@ class Window(QMainWindow):
         self.fps_ratio_label = QLabel("FPS Out/In: ")
         self.fps_ratio_label.setStyleSheet(self.stylesheet)
 
+        self.video_slider = QSlider(Qt.Orientation.Horizontal, self)
+
+        self.video_slider.setStyleSheet("""
+                                            QSlider {
+                                                min-height: 40px;
+                                                max-height: 40px;
+                                                background:rgb(192, 192, 192);
+                                            }
+
+                                            QSlider::groove:horizontal {
+                                                border: 1px solid #262626;
+                                                height: 5px;
+                                                background: #393939;
+                                                margin: 0 12px;
+                                            }
+
+                                            QSlider::handle:horizontal {
+                                                background:rgb(255, 0, 0);
+                                                border: 5px solidrgb(0, 0, 0);
+                                                width: 60px;
+                                                height: 20px;
+                                                margin: -24px -12px;
+                                            }
+                                        """)
+
+
+        self.video_slider.setMinimum(0)
+        self.video_slider.setMaximum(100)
+        self.video_slider.setTickInterval(5)
+        self.video_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+
+        self.video_slider.sliderPressed.connect(self.pause_slider)
+        self.video_slider.sliderReleased.connect(self.resume_slider)
+        self.video_slider.sliderReleased.connect(self.slider_changed)
+
         self.video_controls.addWidget(self.clear_button)
         self.video_controls.addWidget(self.live_button)
         self.video_controls.addWidget(self.frame_reset_button)
@@ -755,6 +837,7 @@ class Window(QMainWindow):
         self.io_bar.addLayout(self.options)
         self.io_bar.addLayout(self.detach_bar)
         self.io_bar.addWidget(self.io_viewer)
+        self.io_bar.addWidget(self.video_slider)
         self.io_bar.addLayout(self.video_controls)
 
         self.mid_widget.setLayout(self.io_bar)
@@ -784,6 +867,7 @@ class Window(QMainWindow):
             "Yolov11m":  self.apply_yolo
         }
 
+        self.video_slider.hide()
         self.preset_dropdown.currentIndexChanged.connect(self.load_preset)
 
         self.currentModel = self.model_dropdown.currentText()
@@ -821,6 +905,12 @@ class Window(QMainWindow):
         ret, frame = self.cap.read()
         if ret:
             self.currentFrame = frame.copy()
+
+            if not self.liveVideo:
+                self.frame_position += 1  # Move to the next frame
+                time_pos = self.frame_position / self.firstFPS  # Convert to seconds
+                slider_value = int(time_pos * 100)  # Convert to the scaled slider value
+                self.video_slider.setValue(slider_value)
 
             if not self.currentPreprocess == "None":
                 self.currentPreproccessedFrame = self.preprocesses[self.currentPreprocess](frame)
@@ -866,6 +956,8 @@ class Window(QMainWindow):
                 self.workers.append(new_worker)
                 new_worker.start()
         else:
+            self.frame_position = 0
+            self.video_slider.setValue(0)
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     def on_worker_finished(self):
@@ -899,45 +991,7 @@ class Window(QMainWindow):
     def dropEvent(self, event):
         filePath = event.mimeData().urls()[0].toLocalFile()
         if filePath:
-            if filePath.lower().endswith(('.png', '.jpg', '.jpeg', '.JPG')):
-                self.currentFileExt = os.path.splitext(filePath)[1]
-                self.currentFileName = os.path.basename(filePath).split('.')[0]
-                self.current_media = "img"
-                self.timer.stop()
-                self.fps_timer.stop()
-                self.close_graph()
-                self.cap = None
-                frame = cv2.imread(filePath)
-                if frame is not None:
-                    self.url_bar.setText("")
-                    self.preset_dropdown.setCurrentText("")
-                    self.currentFrame = frame
-                    self.convert_image()
-            if filePath.lower().endswith(('.mp4', '.mov', '.mkv', '.avi')):
-                self.cap = cv2.VideoCapture(filePath)
-                self.currentFile = filePath
-                if self.cap.isOpened:
-                    self.kill_workers()
-                    self.liveVideo = False
-                    self.firstFPS = int((self.cap.get(cv2.CAP_PROP_FPS)))
-                    self.fps_in.setValue(self.firstFPS)
-                    self.currentFileExt = os.path.splitext(filePath)[1]
-                    self.currentFileName = os.path.basename(filePath).split('.')[0]
-                    self.current_media = "vid"
-                    self.paused = False
-                    self.pause_button.setText("Pause")
-                    self.preset_dropdown.setCurrentText("")
-                    self.url_bar.setText("")
-
-                    self.counter = self.fps_in.value()
-                    self.timer.start(self.delay)
-                    self.fps_timer.start(1000)
-
-                    if "Yolo" in self.currentModel:
-                        self.close_graph()
-                        self.show_graph()
-                        #self.display(self.currentFrame, self.processed_label)
-                        self.new_display(self.currentFrame, "right")
+            self.open_file(filePath)
     
     def load_preset(self):
         if self.preset_dropdown.currentText() != "":
@@ -957,6 +1011,7 @@ class Window(QMainWindow):
                     info = ydl.extract_info(link, download=False)
                     if info.get('is_live', False):
                         temp_live = True
+                        self.video_slider.hide()
                     else:
                         temp_live = False
                     self.video_url = info['url']
@@ -976,6 +1031,12 @@ class Window(QMainWindow):
                 self.current_media = "vid"
                 self.paused = False
                 self.pause_button.setText("Pause")
+                if not temp_live:
+                    self.video_slider.show()
+                    self.num_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    self.duration = self.num_frames / self.firstFPS
+                    self.frame_position = 0
+                    self.video_slider.setMaximum(int(self.duration * 100))
                 if close_preset:
                     self.preset_dropdown.setCurrentText("")
                 self.timer.start(self.delay)
@@ -985,6 +1046,7 @@ class Window(QMainWindow):
                     self.close_graph()
                     self.show_graph()
                     self.new_display(self.currentFrame, "right")
+                    
 
     def set_file_menu(self):
         if self.file_dropdown.currentText() == "Load Image or Video":
@@ -999,44 +1061,53 @@ class Window(QMainWindow):
                                                        "All Files (*);;Images (*.png *.jpg *.jpeg);;Videos (*.mp4 *.avi *.mov *.mkv)")
 
         if filePath:
-            if filePath.lower().endswith(('.png', '.jpg', '.jpeg', '.JPG')):
+            self.open_file(filePath)
+
+    
+    def open_file(self, filePath):
+        if filePath.lower().endswith(('.png', '.jpg', '.jpeg', '.JPG')):
+            self.currentFileExt = os.path.splitext(filePath)[1]
+            self.currentFileName = os.path.basename(filePath).split('.')[0]
+            self.current_media = "img"
+            self.timer.stop()
+            self.fps_timer.stop()
+            self.close_graph()
+            self.cap = None
+            frame = cv2.imread(filePath)
+            if frame is not None:
+                self.url_bar.setText("")
+                self.preset_dropdown.setCurrentText("")
+                self.currentFrame = frame
+                self.convert_image()
+        if filePath.lower().endswith(('.mp4', '.mov', '.mkv', '.avi')):
+            self.cap = cv2.VideoCapture(filePath)
+            self.currentFile = filePath
+            if self.cap.isOpened:
+                self.kill_workers()
+                self.liveVideo = False
+                self.firstFPS = int((self.cap.get(cv2.CAP_PROP_FPS)))
+                self.fps_in.setValue(self.firstFPS)
+                self.video_slider.show()
+                self.num_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                self.duration = self.num_frames / self.firstFPS
+                self.frame_position = 0
+                self.video_slider.setMaximum(int(self.duration * 100))
                 self.currentFileExt = os.path.splitext(filePath)[1]
                 self.currentFileName = os.path.basename(filePath).split('.')[0]
-                self.current_media = "img"
-                self.timer.stop()
-                self.fps_timer.stop()
-                self.close_graph()
-                self.cap = None
-                frame = cv2.imread(filePath)
-                if frame is not None:
-                    self.url_bar.setText("")
-                    self.preset_dropdown.setCurrentText("")
-                    self.currentFrame = frame
-                    self.convert_image()
-            if filePath.lower().endswith(('.mp4', '.mov', '.mkv', '.avi')):
-                self.cap = cv2.VideoCapture(filePath)
-                self.currentFile = filePath
-                if self.cap.isOpened:
-                    self.kill_workers()
-                    self.liveVideo = False
-                    self.firstFPS = int((self.cap.get(cv2.CAP_PROP_FPS)))
-                    self.fps_in.setValue(self.firstFPS)
-                    self.currentFileExt = os.path.splitext(filePath)[1]
-                    self.currentFileName = os.path.basename(filePath).split('.')[0]
-                    self.current_media = "vid"
-                    self.paused = False
-                    self.pause_button.setText("Pause")
-                    self.url_bar.setText("")
-                    self.preset_dropdown.setCurrentText("")
+                self.current_media = "vid"
+                self.paused = False
+                self.pause_button.setText("Pause")
+                self.url_bar.setText("")
+                self.preset_dropdown.setCurrentText("")
 
-                    self.timer.start(self.delay)
-                    self.fps_timer.start(1000)
+                self.timer.start(self.delay)
+                self.fps_timer.start(1000)
 
-                    if "Yolo" in self.currentModel:
-                        self.close_graph()
-                        self.show_graph()
-                        #self.display(self.currentFrame, self.processed_label)
-                        self.new_display(self.currentFrame, "right")
+                if "Yolo" in self.currentModel:
+                    self.close_graph()
+                    self.show_graph()
+                    #self.display(self.currentFrame, self.processed_label)
+                    self.new_display(self.currentFrame, "right")
 
     def save_file(self):
         if self.currentOutFrame is not None:
@@ -1274,6 +1345,24 @@ class Window(QMainWindow):
                 self.timerD.stop()
                 self.paused = True
                 self.pause_button.setText("Play")
+    
+    def pause_slider(self):
+        self.timer.stop()
+        self.timerD.stop()
+        self.paused = True
+        self.pause_button.setText("Play")
+    
+    def resume_slider(self):
+        self.timer.start()
+        self.timerD.start()
+        self.paused = False
+        self.pause_button.setText("Pause")
+    
+    def slider_changed(self):
+        time_pos = self.video_slider.value() / 100
+        self.frame_position = int(time_pos * self.firstFPS)
+        self.kill_workers()
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.frame_position)
     
     def toggle_show_middle(self):
         if self.showMiddle:
